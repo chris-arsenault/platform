@@ -41,7 +41,7 @@ Use this to determine which steps apply to your project.
 | 2 | Terraform backend | Your project | Always |
 | 3 | Deploy script | Your project | Always |
 | 4 | ALB backend (listener rule, cert, DNS) | Your project | If project has an HTTP API |
-| 5 | Database (migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
+| 5 | Database (platform.yml, migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
 | 6 | Cognito client | Your project | If project has a frontend with login |
 | 7 | CI dashboard reporting | Your project workflow | Always |
 
@@ -335,62 +335,52 @@ variable "migration_projects" {
 
 The migration service creates the database automatically on first migration.
 
-### 5b. Migration file structure
+### 5b. Create `platform.yml` in your project root
+
+```yaml
+project: <name>
+prefix: <prefix>
+migrations: db/migrations
+```
+
+### 5c. Migration file structure
 
 ```
-db/migrations/001_create_tables.sql          # forward (auto-triggered on upload)
+db/migrations/001_create_tables.sql          # forward migrations
 db/migrations/002_add_indexes.sql
-db/migrations/rollback/002_add_indexes.sql   # rollback (manual invocation)
+db/migrations/rollback/002_add_indexes.sql   # rollback for each migration
 db/migrations/rollback/001_create_tables.sql
-db/migrations/seed/001_initial_data.sql      # seed (manual invocation)
+db/migrations/seed/001_initial_data.sql      # seed data
 ```
 
 Filenames must sort lexicographically. Use zero-padded numbers.
 
-### 5c. Deploy script integration
+### 5d. Platform CLI commands
 
-Add this to `scripts/deploy.sh` **before** `terraform apply`:
+All database commands are in `~/src/platform/bin/` (run `platform-setup` once to add to PATH). Commands operate on the current working directory, read config from `platform.yml`, require no arguments:
 
 ```bash
-MIGRATIONS_BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
-  --query Parameter.Value --output text --region us-east-1)
-
-if [ -d "${ROOT_DIR}/db/migrations" ]; then
-  echo "Uploading migrations..."
-  aws s3 sync "${ROOT_DIR}/db/migrations/" \
-    "s3://${MIGRATIONS_BUCKET}/migrations/<name>/" \
-    --delete
-fi
+db-migrate              # upload SQL files to S3, invoke migration Lambda, wait for result
+db-rollback             # roll back all migrations
+db-rollback 001_xxx.sql # roll back to a specific migration
+db-seed                 # run seed SQL files
+db-drop                 # drop the project database (requires confirmation)
 ```
 
-EventBridge triggers the migration Lambda automatically on upload. Behavior:
+Add `db-migrate` to your deploy script:
+
+```bash
+# In scripts/deploy.sh, after build steps and before terraform apply:
+db-migrate
+```
+
+Behavior:
+- Uploads migration SQL files to S3, invokes the migration Lambda synchronously
 - Migrations run in order, each in a transaction
 - Checksum verification prevents modified migrations from reapplying
 - Advisory locks prevent concurrent runs for the same project
 - All operations are audited in the `platform_ops` database (survives project drops)
-
-### 5d. Manual operations
-
-```bash
-MIGRATE_FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
-  --query Parameter.Value --output text --region us-east-1)
-
-# Rollback to a specific migration (rolls back everything after it)
-aws lambda invoke --function-name "$MIGRATE_FN" \
-  --payload '{"operation":"rollback","project":"<name>","target":"001_create_tables.sql"}' /dev/null
-
-# Rollback all
-aws lambda invoke --function-name "$MIGRATE_FN" \
-  --payload '{"operation":"rollback","project":"<name>"}' /dev/null
-
-# Seed
-aws lambda invoke --function-name "$MIGRATE_FN" \
-  --payload '{"operation":"seed","project":"<name>"}' /dev/null
-
-# Drop database (destructive)
-aws lambda invoke --function-name "$MIGRATE_FN" \
-  --payload '{"operation":"drop","project":"<name>"}' /dev/null
-```
+- Deploy fails if migrations fail
 
 ### 5e. Lambda VPC config for database access
 

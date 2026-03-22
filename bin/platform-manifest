@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Reads a value from platform.yml in the current directory or nearest parent.
+# Usage: platform-manifest <key>
+set -euo pipefail
+
+KEY="${1:?Usage: platform-manifest <key>}"
+
+find_manifest() {
+  local dir="$PWD"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/platform.yml" ]; then
+      echo "$dir/platform.yml"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  echo "ERROR: No platform.yml found in $PWD or any parent directory" >&2
+  return 1
+}
+
+MANIFEST=$(find_manifest)
+
+# Simple YAML key extraction (single-level, no dependencies)
+VALUE=$(grep -E "^${KEY}:" "$MANIFEST" | sed "s/^${KEY}:[[:space:]]*//" | sed 's/[[:space:]]*$//')
+
+if [ -z "$VALUE" ]; then
+  echo "ERROR: Key '${KEY}' not found in ${MANIFEST}" >&2
+  exit 1
+fi
+
+echo "$VALUE"

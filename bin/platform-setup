@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Adds platform/bin to PATH in your shell profile.
+# Run once: ~/src/platform/bin/platform-setup
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXPORT_LINE="export PATH=\"${BIN_DIR}:\$PATH\""
+
+add_to_profile() {
+  local profile="$1"
+  if [ -f "$profile" ]; then
+    if grep -qF "$BIN_DIR" "$profile" 2>/dev/null; then
+      echo "Already in ${profile}"
+      return
+    fi
+    echo "" >> "$profile"
+    echo "# Platform CLI tools" >> "$profile"
+    echo "$EXPORT_LINE" >> "$profile"
+    echo "Added to ${profile}"
+  fi
+}
+
+# Try both
+add_to_profile "$HOME/.bashrc"
+add_to_profile "$HOME/.zshrc"
+
+echo ""
+echo "Restart your shell or run:"
+echo "  ${EXPORT_LINE}"

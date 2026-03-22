@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Drops the project's database. Destructive — requires confirmation.
+set -euo pipefail
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+
+echo "WARNING: This will drop the '${PROJECT}' database."
+read -p "Type the project name to confirm: " CONFIRM
+if [ "${CONFIRM}" != "${PROJECT}" ]; then
+  echo "Aborted."
+  exit 1
+fi
+
+FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+  --query Parameter.Value --output text --region "${REGION}")
+
+echo "Dropping ${PROJECT}..."
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "{\"operation\":\"drop\",\"project\":\"${PROJECT}\"}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "Drop FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"

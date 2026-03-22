@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Rolls back migrations. Optional target: the migration filename to roll back TO.
+# Usage: db-rollback [target-filename]
+set -euo pipefail
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+TARGET="${1:-}"
+
+FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+  --query Parameter.Value --output text --region "${REGION}")
+
+PAYLOAD="{\"operation\":\"rollback\",\"project\":\"${PROJECT}\""
+if [ -n "${TARGET}" ]; then
+  PAYLOAD="${PAYLOAD},\"target\":\"${TARGET}\""
+fi
+PAYLOAD="${PAYLOAD}}"
+
+echo "Rolling back ${PROJECT}${TARGET:+ to ${TARGET}}..."
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "${PAYLOAD}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "Rollback FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
