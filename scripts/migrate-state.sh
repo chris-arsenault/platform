@@ -86,7 +86,7 @@ copy_state "tf-state-platform-${ACCOUNT_ID}"    "platform-services.tfstate"   "p
 
 # Consumer projects
 copy_state "tf-state-websites-${ACCOUNT_ID}"    "ahara-static-websites.tfstate" "projects/websites.tfstate"
-copy_state "tf-state-websites-${ACCOUNT_ID}"    "svap.tfstate"                  "projects/svap.tfstate"
+copy_state "svap-tfstate-${ACCOUNT_ID}"          "svap.tfstate"                  "projects/svap.tfstate"
 
 echo
 echo -e "${GREEN}${BOLD}State files copied.${RESET}"
