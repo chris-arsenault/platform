@@ -336,7 +336,13 @@ variable "migration_projects" {
 }
 ```
 
-The migration service creates the database automatically on first migration.
+On first migration, the platform automatically:
+1. Creates the database
+2. Creates an application role (`<name>_app` with login)
+3. Grants the role full access on the database and public schema
+4. Publishes credentials to SSM at `/platform/db/<name>/username`, `/platform/db/<name>/password`, `/platform/db/<name>/database`
+
+**Do NOT create database users, roles, or grants in your migration SQL files.** That is platform infrastructure. Your migrations should only contain tables, indexes, constraints, and data.
 
 ### 5b. Create `platform.yml` in your project root
 
@@ -357,6 +363,12 @@ db/migrations/seed/001_initial_data.sql      # seed data
 ```
 
 Filenames must sort lexicographically. Use zero-padded numbers.
+
+**Migration files must only contain schema and data — tables, indexes, constraints, inserts.** Do NOT include:
+- `CREATE ROLE` / `CREATE USER` — the platform creates the app role
+- `GRANT` / `REVOKE` — the platform sets permissions
+- `ALTER DEFAULT PRIVILEGES` — the platform configures these
+- `CREATE DATABASE` — the platform creates the database
 
 ### 5d. Platform CLI commands
 
@@ -403,7 +415,23 @@ resource "aws_lambda_function" "api" {
 }
 ```
 
-For application credentials: create a per-project user in your first migration (`001_create_tables.sql`), or use the master credentials from `/platform/rds/master-username` and `/platform/rds/master-password` for platform-internal services.
+For application credentials, read the per-project SSM params published by the migration service:
+
+```hcl
+data "aws_ssm_parameter" "db_username" {
+  name = "/platform/db/<name>/username"
+}
+
+data "aws_ssm_parameter" "db_password" {
+  name = "/platform/db/<name>/password"
+}
+
+data "aws_ssm_parameter" "db_database" {
+  name = "/platform/db/<name>/database"
+}
+```
+
+Use these in your Lambda environment — not the master credentials. The master credentials (`/platform/rds/master-*`) are for platform-internal services only.
 
 ---
 
@@ -752,6 +780,9 @@ All parameters are in `us-east-1`.
 |-----------|------|--------|
 | `/platform/db/migrations-bucket` | String | platform-services |
 | `/platform/db/migrate-function` | String | platform-services |
+| `/platform/db/<project>/username` | String | migration Lambda (auto-created) |
+| `/platform/db/<project>/password` | SecureString | migration Lambda (auto-created) |
+| `/platform/db/<project>/database` | String | migration Lambda (auto-created) |
 
 ### /platform/ci/*
 
