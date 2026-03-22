@@ -134,18 +134,13 @@ Add build steps before `terraform init` if your project has Lambda code or front
 
 Every backend MUST use the shared ALB. Do not create API Gateways.
 
-There are two auth patterns — pick the right one:
+Authentication is handled at the ALB layer using native JWT verification (`jwt-validation` action). The ALB validates the `Authorization: Bearer` token against Cognito's JWKS endpoint before forwarding to your Lambda. No auth code in your application.
 
-| Pattern | Use when | Auth flow |
-|---------|----------|-----------|
-| **ALB Cognito action** | Dashboards, server-rendered apps, admin UIs | ALB redirects to Cognito hosted UI, sets session cookie |
-| **Lambda JWT validation** | SPA API backends (React + Vite apps) | Frontend sends `Authorization: Bearer` token, Lambda validates against Cognito JWKS |
-
-**Most projects on this platform are SPAs** — use Lambda JWT validation. The ALB Cognito action uses redirect-based auth with cookies, which breaks `fetch()` calls from SPAs (302 redirects, cross-origin cookie issues).
-
-### Common infrastructure (both patterns)
+The frontend handles login via `amazon-cognito-identity-js` (in-app sign-in form, not Cognito hosted UI) and sends the Bearer token on every request. The ALB rejects invalid/expired tokens before they reach your code.
 
 ```hcl
+# --- Platform SSM params ---
+
 data "aws_ssm_parameter" "alb_listener_arn" {
   name = "/platform/network/alb-listener-arn"
 }
@@ -160,6 +155,10 @@ data "aws_ssm_parameter" "alb_zone_id" {
 
 data "aws_ssm_parameter" "route53_zone_id" {
   name = "/platform/network/route53-zone-id"
+}
+
+data "aws_ssm_parameter" "cognito_user_pool_id" {
+  name = "/platform/cognito/user-pool-id"
 }
 
 # --- Lambda target group ---
@@ -181,6 +180,41 @@ resource "aws_lambda_permission" "alb" {
   function_name = aws_lambda_function.api.function_name
   principal     = "elasticloadbalancing.amazonaws.com"
   source_arn    = aws_lb_target_group.api.arn
+}
+
+# --- Listener rule (JWT validation + forward) ---
+
+locals {
+  cognito_pool_id = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
+  cognito_issuer  = "https://cognito-idp.us-east-1.amazonaws.com/${local.cognito_pool_id}"
+  cognito_jwks    = "${local.cognito_issuer}/.well-known/jwks.json"
+}
+
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
+  priority     = <unique-number>  # 200+ for consumer projects, must not conflict
+
+  condition {
+    host_header {
+      values = ["<service>.ahara.io"]
+    }
+  }
+
+  action {
+    type  = "jwt-validation"
+    order = 1
+
+    jwt_validation_config {
+      jwks_endpoint = local.cognito_jwks
+      issuer        = local.cognito_issuer
+    }
+  }
+
+  action {
+    type             = "forward"
+    order            = 2
+    target_group_arn = aws_lb_target_group.api.arn
+  }
 }
 
 # --- TLS cert ---
@@ -232,109 +266,17 @@ resource "aws_route53_record" "api" {
 }
 ```
 
-### Pattern A: SPA API backend (Lambda JWT validation)
+The ALB forwards validated requests with `X-AMZ-OIDC-*` headers containing the token claims. Your Lambda can read user identity from these headers without any auth library.
 
-**Use this for React + Vite apps.** The frontend handles login via `amazon-cognito-identity-js` and sends `Authorization: Bearer <token>` on every request. The Lambda validates the JWT against Cognito's JWKS endpoint. The ALB just forwards — no auth action.
-
-```hcl
-resource "aws_lb_listener_rule" "api" {
-  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
-  priority     = <unique-number>  # 200+ for consumer projects
-
-  condition {
-    host_header {
-      values = ["<service>.ahara.io"]
-    }
-  }
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
-  }
-}
-```
-
-Your Lambda must validate the JWT. In Rust, use `jsonwebtoken` + `reqwest` to fetch `https://cognito-idp.us-east-1.amazonaws.com/<pool-id>/.well-known/jwks.json` and verify the token signature, expiry, audience, and issuer. In TypeScript, use `aws-jwt-verify`.
-
-Pass the Cognito pool ID and client ID as Lambda environment variables (read from SSM):
-
-```hcl
-data "aws_ssm_parameter" "cognito_user_pool_id" {
-  name = "/platform/cognito/user-pool-id"
-}
-
-data "aws_ssm_parameter" "cognito_client" {
-  name = "/platform/cognito/clients/<app>"
-}
-
-resource "aws_lambda_function" "api" {
-  # ...
-  environment {
-    variables = {
-      COGNITO_USER_POOL_ID = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
-      COGNITO_CLIENT_ID    = nonsensitive(data.aws_ssm_parameter.cognito_client.value)
-    }
-  }
-}
-```
-
-### Pattern B: Dashboard / server-rendered app (ALB Cognito action)
-
-**Use this for dashboards, admin UIs, and anything that isn't an SPA API.** The ALB redirects unauthenticated users to the Cognito hosted UI, then sets a session cookie. No application-level auth code needed.
-
-```hcl
-data "aws_ssm_parameter" "alb_cognito_pool_arn" {
-  name = "/platform/network/alb-cognito-pool-arn"
-}
-
-data "aws_ssm_parameter" "alb_cognito_client_id" {
-  name = "/platform/network/alb-cognito-client-id"
-}
-
-data "aws_ssm_parameter" "alb_cognito_domain" {
-  name = "/platform/network/alb-cognito-domain"
-}
-
-resource "aws_lb_listener_rule" "dashboard" {
-  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
-  priority     = <unique-number>
-
-  condition {
-    host_header {
-      values = ["<service>.ahara.io"]
-    }
-  }
-
-  action {
-    type  = "authenticate-cognito"
-    order = 1
-
-    authenticate_cognito {
-      user_pool_arn              = nonsensitive(data.aws_ssm_parameter.alb_cognito_pool_arn.value)
-      user_pool_client_id        = nonsensitive(data.aws_ssm_parameter.alb_cognito_client_id.value)
-      user_pool_domain           = nonsensitive(data.aws_ssm_parameter.alb_cognito_domain.value)
-      on_unauthenticated_request = "authenticate"
-      scope                      = "openid email profile"
-      session_cookie_name        = "alb-auth"
-      session_timeout            = 3600
-    }
-  }
-
-  action {
-    type             = "forward"
-    order            = 2
-    target_group_arn = aws_lb_target_group.dashboard.arn
-  }
-}
-```
-
-### Listener rule priorities
+**Listener rule priorities** — existing allocations:
 
 | Priority | Host | Owner |
 |----------|------|-------|
 | 100 | dashboards.ahara.io | platform-network |
 
 Use 200+ for consumer projects. Do not reuse an existing priority.
+
+Omit the `jwt-validation` action only if the endpoint is intentionally public (no auth).
 
 ---
 
@@ -397,23 +339,25 @@ resource "aws_lambda_function" "api" {
 
 ---
 
-## Step 6: Cognito Authentication
+## Step 6: Cognito Client Registration
 
-The shared Cognito pool is used for all personal projects. If your backend is behind the shared ALB with an `authenticate-cognito` action (Step 4), auth is handled automatically — the ALB injects user claims into the request headers.
+Auth is handled at the ALB layer (Step 4) — your Lambda receives pre-validated requests. But your frontend needs a Cognito client to obtain tokens.
 
-To register a new Cognito client for your app, add an entry to `var.cognito_clients` in `~/src/platform-services/infrastructure/terraform/variables.tf`.
+**To register a new Cognito client for your app:**
 
-To grant a user access to your app, add an entry to the `apps` map in the DynamoDB `websites-user-access` table. The pre-auth Lambda checks this table on every login.
+1. Add an entry to `var.cognito_clients` in `~/src/platform-services/infrastructure/terraform/variables.tf`
+2. Apply platform-services
+3. The client ID is published to `/platform/cognito/clients/<key>`
 
-For frontend apps that need to initiate the OAuth flow directly:
+**To grant a user access to your app**, add an entry to the `apps` map in the DynamoDB `websites-user-access` table (key: username, field: `apps.<appname>` = role). The pre-auth Lambda checks this table on every login.
+
+**Frontend auth flow**: Use `amazon-cognito-identity-js` with an in-app login form. The frontend authenticates directly with Cognito, receives tokens, and sends `Authorization: Bearer <access_token>` on every API request. The ALB `jwt-validation` action validates the token before it reaches your Lambda.
+
+Frontend config (pass these as build-time env vars or runtime config):
 
 ```hcl
 data "aws_ssm_parameter" "cognito_user_pool_id" {
   name = "/platform/cognito/user-pool-id"
-}
-
-data "aws_ssm_parameter" "cognito_domain" {
-  name = "/platform/cognito/domain"
 }
 
 data "aws_ssm_parameter" "cognito_client" {
