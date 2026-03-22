@@ -90,9 +90,49 @@ copy_state "svap-tfstate-${ACCOUNT_ID}"          "svap.tfstate"                 
 
 echo
 echo -e "${GREEN}${BOLD}State files copied.${RESET}"
+
+# --- Empty and delete old buckets ---
+
+OLD_BUCKETS=(
+  "tf-state-boilerplate-${ACCOUNT_ID}"
+  "tf-state-vpn-${ACCOUNT_ID}"
+  "tf-state-platform-${ACCOUNT_ID}"
+  "tf-state-websites-${ACCOUNT_ID}"
+  "svap-tfstate-${ACCOUNT_ID}"
+)
+
 echo
-echo "Next steps:"
-echo "  1. Run each project's deploy script (scripts/deploy.sh) — it will"
-echo "     pick up the new bucket from its default and re-init automatically."
-echo "  2. Verify terraform plan shows no unexpected changes."
-echo "  3. Once verified, old buckets can be emptied and deleted."
+echo -e "${BOLD}Cleaning up old buckets...${RESET}"
+for bucket in "${OLD_BUCKETS[@]}"; do
+  if aws s3api head-bucket --bucket "${bucket}" 2>/dev/null; then
+    echo -e "Emptying s3://${bucket} (including versions)..."
+    aws s3api list-object-versions --bucket "${bucket}" --output json \
+      | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+objects = []
+for v in data.get('Versions', []):
+    objects.append({'Key': v['Key'], 'VersionId': v['VersionId']})
+for m in data.get('DeleteMarkers', []):
+    objects.append({'Key': m['Key'], 'VersionId': m['VersionId']})
+if objects:
+    print(json.dumps({'Objects': objects, 'Quiet': True}))
+else:
+    print('')
+" | while read -r delete_json; do
+      if [ -n "${delete_json}" ]; then
+        aws s3api delete-objects --bucket "${bucket}" --delete "${delete_json}"
+      fi
+    done
+    aws s3api delete-bucket --bucket "${bucket}" 2>/dev/null && \
+      echo -e "${GREEN}Deleted ${bucket}${RESET}" || \
+      echo -e "${RED}Could not delete ${bucket}${RESET}"
+  else
+    echo -e "${bucket} not found, skipping."
+  fi
+done
+
+echo
+echo -e "${GREEN}${BOLD}Migration complete.${RESET}"
+echo
+echo "Next: run ~/src/platform/scripts/deploy-all.sh"
