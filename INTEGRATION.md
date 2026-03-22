@@ -1,37 +1,70 @@
 # Platform Integration Guide
 
-**This document is for AI agents.** Follow these instructions exactly when integrating a project. Do not create per-project VPCs, load balancers, API Gateways, or Cognito pools. All of these exist as shared infrastructure — use them.
+> **AUDIENCE**: This document is for AI agents integrating projects with the platform. Follow these instructions exactly.
 
-## Mandatory Architecture
+---
 
-Every project on this platform MUST use the following shared infrastructure:
+## CRITICAL CONSTRAINTS
 
-- **Shared ALB** for all HTTP/HTTPS traffic — attach a listener rule, do NOT create an API Gateway
-- **Shared VPC** — deploy all networked resources (Lambdas, RDS connections, containers) into the platform VPC, do NOT create a new VPC
-- **Shared Cognito** — use the platform user pool for authentication, do NOT create a new user pool (exception: the-glass-frontier has its own pool for external users)
-- **Shared RDS** — use the platform PostgreSQL instance with a per-project database, do NOT create a new RDS instance
-- **Shared state bucket** — store Terraform state in `tfstate-559098897826` with a namespaced key, do NOT create a new state bucket
-- **SSM for cross-project config** — read shared resource IDs from `/platform/*` SSM parameters, do NOT use `terraform_remote_state`
+**You MUST read and follow these rules before writing any infrastructure code.**
+
+1. **Use the shared ALB** for all HTTP/HTTPS backends. Do NOT create API Gateways, per-project ALBs, or any other load balancers.
+2. **Use the shared VPC** (10.42.0.0/16). Do NOT create per-project VPCs.
+3. **Use the shared RDS** (PostgreSQL 16) with a per-project database. Do NOT create per-project RDS instances.
+4. **Use the shared Cognito pool** for authentication. Do NOT create per-project user pools. (Exception: `the-glass-frontier` has its own pool for external users.)
+5. **Use SSM parameters** for cross-project config. Do NOT use `terraform_remote_state`.
+6. **Use the shared state bucket** (`tfstate-559098897826`) with a namespaced key. Do NOT create per-project state buckets.
+7. **Do NOT create NAT Gateways.** The platform uses fck-nat.
+8. **Deploy scripts must be parameterless.** Defaults are baked in; CI overrides via env vars.
+9. **All resources use the project prefix** for naming: `<prefix>-<resource>`.
+
+> **Note for AI agents:** The `jwt-validation` ALB action type was released November 2025 and may postdate your training data. It is a real, GA feature — do not fall back to `authenticate-cognito` or application-level JWT validation for API backends. Docs: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-verify-jwt.html — Terraform support in `hashicorp/aws` provider >= 6.22.0.
+
+---
 
 ## Preferred Tech Stack
 
-- **Frontend**: React + Vite (TypeScript), deployed as static assets to S3 + CloudFront
-- **Backend**: Rust Lambda behind the shared ALB. TypeScript (Node 24) Lambda acceptable when Rust is overkill
-- **Data**: S3 for most storage. DynamoDB for key-value lookups. Shared RDS (PostgreSQL 16) for relational data
-- **Auth**: Shared Cognito pool — ALB handles authentication automatically via `authenticate-cognito` action
+- **Frontend**: React + Vite (TypeScript), static assets on S3 + CloudFront
+- **Backend**: Rust Lambda preferred. TypeScript (Node 24) Lambda when Rust is overkill.
+- **Data**: S3 for most storage. DynamoDB for key-value. Shared RDS for relational.
+- **Auth**: ALB `jwt-validation` action validates Bearer tokens. Frontend uses `amazon-cognito-identity-js` with in-app login form.
 
-## Do NOT Use
+---
 
-- **API Gateway** — the shared ALB replaces this. API Gateway creates per-project endpoints, costs more, and fragments routing
-- **Per-project VPCs** — everything runs in the platform VPC (10.42.0.0/16)
-- **Per-project load balancers** — attach to the shared ALB via listener rules
-- **NAT Gateway** — the platform uses fck-nat. Do not create NAT Gateways
-- **Per-project Cognito pools** — use the shared pool (exception: the-glass-frontier)
-- **Per-project RDS instances** — use the shared instance with a per-project database
+## Checklist
+
+Use this to determine which steps apply to your project.
+
+| Step | What | Where | Required? |
+|------|------|-------|-----------|
+| 1 | Register deployer role | `platform-control` repo | Always |
+| 2 | Terraform backend | Your project | Always |
+| 3 | Deploy script | Your project | Always |
+| 4 | ALB backend (listener rule, cert, DNS) | Your project | If project has an HTTP API |
+| 5 | Database (migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
+| 6 | Cognito client | Your project | If project has a frontend with login |
+| 7 | CI dashboard reporting | Your project workflow | Always |
+
+---
+
+## Placeholders
+
+These placeholders appear throughout. Decide them once and use consistently.
+
+| Placeholder | Meaning | Example |
+|-------------|---------|---------|
+| `<name>` | Project name (used in file names, state keys, migration paths) | `dosekit` |
+| `<prefix>` | Short resource prefix (used in IAM role, AWS resource names) | `dosekit` |
+| `<service>` | Subdomain for the API endpoint | `api.dosekit.ahara.io` |
+| `<github-repo>` | GitHub repo name (without owner) | `dosekit` |
+
+`<name>` and `<prefix>` are often the same value. They only differ for legacy projects (e.g. prefix `boilerplate` for repo `platform-control`).
 
 ---
 
 ## Step 1: Register the Project
+
+**This step requires a change to the `platform-control` repo.**
 
 Create `~/src/platform-control/infrastructure/terraform/project-<name>.tf`:
 
@@ -43,34 +76,33 @@ module "<name>_project" {
   account_id        = local.account_id
 
   github_pat         = var.github_pat
-  allowed_repos      = ["<github-repo-name>"]
+  allowed_repos      = ["<github-repo>"]
   allowed_branches   = ["main"]
   allow_pull_request = true
 
-  prefix           = "<short-prefix>"
+  prefix           = "<prefix>"
   state_key_prefix = "projects/<name>"
   policy_modules   = ["state", "<additional-policies>"]
 }
 ```
 
-**Fields:**
-- `prefix` — short unique string for IAM role (`deployer-<prefix>`) and resource naming (`<prefix>-*`)
-- `state_key_prefix` — S3 key prefix for state files. Platform repos use `platform`, consumer projects use `projects/<name>`
-- `policy_modules` — permissions from the policy library:
+### Policy modules
 
-| Module | Use when your project needs |
-|--------|----------------------------|
-| `state` | Always required — access to the shared state bucket |
-| `api` | Lambda functions, CloudWatch Logs |
-| `cognito-client` | Creating a Cognito client on the shared pool (most apps need this) |
-| `bedrock` | Bedrock model invocation |
-| `iam` | Creating IAM roles scoped to your prefix |
-| `static-website` | S3 + CloudFront static sites |
-| `platform-services` | Platform-level only: Cognito pools, DynamoDB, SSM writes, SNS, ACM, Route53 |
+| Module | When to include |
+|--------|----------------|
+| `state` | **Always** — access to the shared state bucket |
+| `api` | Project has Lambda functions |
+| `cognito-client` | Project creates its own Cognito client (most apps) |
+| `bedrock` | Project uses Bedrock model invocation |
+| `iam` | Project creates IAM roles scoped to its prefix |
+| `static-website` | Project deploys S3 + CloudFront static sites |
+| `platform-services` | **Platform repos only** — broad Cognito, DynamoDB, SSM, SNS, ACM, Route53 |
 
 ---
 
 ## Step 2: Terraform Backend
+
+**All remaining steps are changes to your project repo.**
 
 ```hcl
 terraform {
@@ -91,23 +123,22 @@ terraform {
 
 provider "aws" {
   region = "us-east-1"
-
   default_tags {
     tags = {
-      Project   = "<Project Name>"
+      Project   = "<name>"
       ManagedBy = "Terraform"
     }
   }
 }
 ```
 
-**Key naming:** `platform/<name>.tfstate` for platform repos, `projects/<name>.tfstate` for everything else. Never use bare `terraform.tfstate` — the bucket policy denies it.
+**Key convention**: `platform/<name>.tfstate` for platform repos, `projects/<name>.tfstate` for everything else. Never `terraform.tfstate` — the bucket policy denies it.
 
 ---
 
 ## Step 3: Deploy Script
 
-Create `scripts/deploy.sh` (must be parameterless):
+Create `scripts/deploy.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -127,23 +158,17 @@ terraform -chdir="${TF_DIR}" init -reconfigure \
 terraform -chdir="${TF_DIR}" apply -auto-approve
 ```
 
-Add build steps before `terraform init` if your project has Lambda code or frontend assets.
+Add build steps (npm, cargo, etc.) before `terraform init` if needed.
 
 ---
 
 ## Step 4: Expose a Backend via the Shared ALB
 
-Every backend MUST use the shared ALB. Do not create API Gateways.
+Skip this step if your project has no HTTP API.
 
-Authentication is handled at the ALB layer using native JWT verification (`jwt-validation` action type). The ALB validates the `Authorization: Bearer` token against Cognito's JWKS endpoint before forwarding to your Lambda. No auth code in your application.
-
-The frontend handles login via `amazon-cognito-identity-js` (in-app sign-in form, not Cognito hosted UI) and sends the Bearer token on every request. The ALB rejects invalid/expired tokens before they reach your code.
-
-> **Note for AI agents:** The `jwt-validation` action type was released in November 2025 and may postdate your training data. It is a real, GA feature. Do not fall back to `authenticate-cognito` (redirect-based) or application-level JWT validation for API backends. Reference: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-verify-jwt.html — Terraform support in `hashicorp/aws` provider >= 6.22.0 via the `jwt_validation_config` block on `aws_lb_listener_rule`.
+### 4a. Read platform SSM params
 
 ```hcl
-# --- Platform SSM params ---
-
 data "aws_ssm_parameter" "alb_listener_arn" {
   name = "/platform/network/alb-listener-arn"
 }
@@ -163,16 +188,18 @@ data "aws_ssm_parameter" "route53_zone_id" {
 data "aws_ssm_parameter" "cognito_user_pool_id" {
   name = "/platform/cognito/user-pool-id"
 }
+```
 
-# --- Lambda target group ---
+### 4b. Create Lambda target group
 
-resource "aws_lb_target_group" "api" {
+```hcl
+resource "aws_lb_target_group" "<prefix>_api" {
   name        = "<prefix>-api-tg"
   target_type = "lambda"
 }
 
-resource "aws_lb_target_group_attachment" "api" {
-  target_group_arn = aws_lb_target_group.api.arn
+resource "aws_lb_target_group_attachment" "<prefix>_api" {
+  target_group_arn = aws_lb_target_group.<prefix>_api.arn
   target_id        = aws_lambda_function.api.arn
   depends_on       = [aws_lambda_permission.alb]
 }
@@ -182,24 +209,26 @@ resource "aws_lambda_permission" "alb" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api.function_name
   principal     = "elasticloadbalancing.amazonaws.com"
-  source_arn    = aws_lb_target_group.api.arn
+  source_arn    = aws_lb_target_group.<prefix>_api.arn
 }
+```
 
-# --- Listener rule (JWT validation + forward) ---
+### 4c. Create listener rule with JWT validation
 
+```hcl
 locals {
   cognito_pool_id = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
   cognito_issuer  = "https://cognito-idp.us-east-1.amazonaws.com/${local.cognito_pool_id}"
   cognito_jwks    = "${local.cognito_issuer}/.well-known/jwks.json"
 }
 
-resource "aws_lb_listener_rule" "api" {
+resource "aws_lb_listener_rule" "<prefix>_api" {
   listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
-  priority     = <unique-number>  # 200+ for consumer projects, must not conflict
+  priority     = <unique-number>
 
   condition {
     host_header {
-      values = ["<service>.ahara.io"]
+      values = ["<service>"]
     }
   }
 
@@ -214,20 +243,33 @@ resource "aws_lb_listener_rule" "api" {
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.api.arn
+    target_group_arn = aws_lb_target_group.<prefix>_api.arn
   }
 }
+```
 
-# --- TLS cert ---
+**Listener rule priorities** — existing allocations:
 
-resource "aws_acm_certificate" "api" {
-  domain_name       = "<service>.ahara.io"
+| Priority | Host | Owner |
+|----------|------|-------|
+| 100 | dashboards.ahara.io | platform-network |
+| 150 | ci.ahara.io | platform-services |
+
+Use 200+ for consumer projects. Do not reuse a priority.
+
+Omit the `jwt-validation` action only if the endpoint is intentionally public.
+
+### 4d. TLS certificate
+
+```hcl
+resource "aws_acm_certificate" "<prefix>_api" {
+  domain_name       = "<service>"
   validation_method = "DNS"
 }
 
-resource "aws_route53_record" "api_cert_validation" {
+resource "aws_route53_record" "<prefix>_api_cert_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.api.domain_validation_options :
+    for dvo in aws_acm_certificate.<prefix>_api.domain_validation_options :
     dvo.domain_name => {
       name  = dvo.resource_record_name
       type  = dvo.resource_record_type
@@ -242,21 +284,23 @@ resource "aws_route53_record" "api_cert_validation" {
   records = [each.value.value]
 }
 
-resource "aws_acm_certificate_validation" "api" {
-  certificate_arn         = aws_acm_certificate.api.arn
-  validation_record_fqdns = [for r in aws_route53_record.api_cert_validation : r.fqdn]
+resource "aws_acm_certificate_validation" "<prefix>_api" {
+  certificate_arn         = aws_acm_certificate.<prefix>_api.arn
+  validation_record_fqdns = [for r in aws_route53_record.<prefix>_api_cert_validation : r.fqdn]
 }
 
-resource "aws_lb_listener_certificate" "api" {
+resource "aws_lb_listener_certificate" "<prefix>_api" {
   listener_arn    = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
-  certificate_arn = aws_acm_certificate_validation.api.certificate_arn
+  certificate_arn = aws_acm_certificate_validation.<prefix>_api.certificate_arn
 }
+```
 
-# --- DNS ---
+### 4e. DNS record
 
-resource "aws_route53_record" "api" {
+```hcl
+resource "aws_route53_record" "<prefix>_api" {
   zone_id = nonsensitive(data.aws_ssm_parameter.route53_zone_id.value)
-  name    = "<service>.ahara.io"
+  name    = "<service>"
   type    = "A"
 
   alias {
@@ -267,45 +311,45 @@ resource "aws_route53_record" "api" {
 }
 ```
 
-The ALB forwards validated requests with `X-AMZ-OIDC-*` headers containing the token claims. Your Lambda can read user identity from these headers without any auth library.
-
-**Listener rule priorities** — existing allocations:
-
-| Priority | Host | Owner |
-|----------|------|-------|
-| 100 | dashboards.ahara.io | platform-network |
-
-Use 200+ for consumer projects. Do not reuse an existing priority.
-
-Omit the `jwt-validation` action only if the endpoint is intentionally public (no auth).
-
 ---
 
-## Step 5: Database (shared RDS + managed migrations)
+## Step 5: Database
 
-Use the shared PostgreSQL 16 instance — do not create a new RDS. The platform manages database creation, schema migrations, and seeding.
+Skip this step if your project does not use PostgreSQL.
 
 ### 5a. Register your project
 
-Your project must be registered in `var.migration_projects` in `~/src/platform-services/infrastructure/terraform/db-migrate.tf`. This maps your project name to a database name. The migration service creates the database automatically on first migration.
+**This step requires a change to the `platform-services` repo.**
+
+Add your project to `var.migration_projects` in `~/src/platform-services/infrastructure/terraform/db-migrate.tf`:
+
+```hcl
+variable "migration_projects" {
+  default = {
+    platform = { db_name = "platform" }
+    svap     = { db_name = "svap" }
+    <name>   = { db_name = "<name>" }   # <-- add this
+  }
+}
+```
+
+The migration service creates the database automatically on first migration.
 
 ### 5b. Migration file structure
 
-In your repo, create numbered SQL files:
-
 ```
-db/migrations/001_create_tables.sql       # forward migrations (auto-triggered)
+db/migrations/001_create_tables.sql          # forward (auto-triggered on upload)
 db/migrations/002_add_indexes.sql
-db/migrations/rollback/002_add_indexes.sql # rollback for each migration
+db/migrations/rollback/002_add_indexes.sql   # rollback (manual invocation)
 db/migrations/rollback/001_create_tables.sql
-db/migrations/seed/001_initial_data.sql   # seed data (manual only)
+db/migrations/seed/001_initial_data.sql      # seed (manual invocation)
 ```
 
-Migration filenames must sort lexicographically in apply order. Use zero-padded numbers.
+Filenames must sort lexicographically. Use zero-padded numbers.
 
 ### 5c. Deploy script integration
 
-Add this to your `scripts/deploy.sh` **before** `terraform apply`:
+Add this to `scripts/deploy.sh` **before** `terraform apply`:
 
 ```bash
 MIGRATIONS_BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
@@ -314,16 +358,18 @@ MIGRATIONS_BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket 
 if [ -d "${ROOT_DIR}/db/migrations" ]; then
   echo "Uploading migrations..."
   aws s3 sync "${ROOT_DIR}/db/migrations/" \
-    "s3://${MIGRATIONS_BUCKET}/migrations/<project>/" \
+    "s3://${MIGRATIONS_BUCKET}/migrations/<name>/" \
     --delete
 fi
 ```
 
-When migration SQL files are uploaded, EventBridge triggers the migration Lambda automatically. Migrations run in order, within transactions, with checksum verification. Concurrent runs for the same project are prevented via PostgreSQL advisory locks. All operations are logged to an audit trail in the `platform_ops` database (survives project database drops).
+EventBridge triggers the migration Lambda automatically on upload. Behavior:
+- Migrations run in order, each in a transaction
+- Checksum verification prevents modified migrations from reapplying
+- Advisory locks prevent concurrent runs for the same project
+- All operations are audited in the `platform_ops` database (survives project drops)
 
 ### 5d. Manual operations
-
-Rollback, seed, and drop are triggered via direct Lambda invocation:
 
 ```bash
 MIGRATE_FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
@@ -333,34 +379,26 @@ MIGRATE_FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
 aws lambda invoke --function-name "$MIGRATE_FN" \
   --payload '{"operation":"rollback","project":"<name>","target":"001_create_tables.sql"}' /dev/null
 
-# Rollback all migrations
+# Rollback all
 aws lambda invoke --function-name "$MIGRATE_FN" \
   --payload '{"operation":"rollback","project":"<name>"}' /dev/null
 
-# Run seed data
+# Seed
 aws lambda invoke --function-name "$MIGRATE_FN" \
   --payload '{"operation":"seed","project":"<name>"}' /dev/null
 
-# Drop the entire database (destructive)
+# Drop database (destructive)
 aws lambda invoke --function-name "$MIGRATE_FN" \
   --payload '{"operation":"drop","project":"<name>"}' /dev/null
 ```
 
-### 5e. Lambda VPC config
+### 5e. Lambda VPC config for database access
 
-Lambdas that read from the database must run in the platform VPC:
+Lambdas accessing RDS must run in the platform VPC:
 
 ```hcl
 data "aws_ssm_parameter" "private_subnet_ids" {
   name = "/platform/network/private-subnet-ids"
-}
-
-data "aws_ssm_parameter" "rds_address" {
-  name = "/platform/rds/address"
-}
-
-data "aws_ssm_parameter" "rds_port" {
-  name = "/platform/rds/port"
 }
 
 resource "aws_lambda_function" "api" {
@@ -372,22 +410,24 @@ resource "aws_lambda_function" "api" {
 }
 ```
 
-Application credentials: create a per-project database user in your first migration (`001_create_tables.sql`) and use those credentials in your Lambda, or use the master credentials from SSM (`/platform/rds/master-username`, `/platform/rds/master-password`) for platform-internal services.
+For application credentials: create a per-project user in your first migration (`001_create_tables.sql`), or use the master credentials from `/platform/rds/master-username` and `/platform/rds/master-password` for platform-internal services.
 
 ---
 
-## Step 6: Cognito Client (self-service)
+## Step 6: Cognito Client
 
-Auth is handled at the ALB layer (Step 4) — your Lambda receives pre-validated requests. Your frontend needs a Cognito client to obtain tokens. **Create it in your own project** — no platform-services change required.
+Skip this step if your project has no frontend with login.
 
-Include `"cognito-client"` in your project's `policy_modules` (Step 1), then:
+Auth is handled at the ALB (Step 4). Your frontend needs a Cognito client to obtain tokens. **Create it in your own project** — no platform-services change required.
+
+Include `"cognito-client"` in your `policy_modules` (Step 1), then:
 
 ```hcl
 data "aws_ssm_parameter" "cognito_user_pool_id" {
   name = "/platform/cognito/user-pool-id"
 }
 
-resource "aws_cognito_user_pool_client" "app" {
+resource "aws_cognito_user_pool_client" "<prefix>_app" {
   name         = "<prefix>-app"
   user_pool_id = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
 
@@ -399,15 +439,15 @@ resource "aws_cognito_user_pool_client" "app" {
 }
 ```
 
-Pass the client ID and pool ID to your frontend as build-time env vars or runtime config. The frontend uses `amazon-cognito-identity-js` with an in-app login form, authenticates directly with Cognito, and sends `Authorization: Bearer <access_token>` on every API request.
+Pass the client ID and pool ID to your frontend as build-time env vars or runtime config. The frontend uses `amazon-cognito-identity-js` with an in-app login form and sends `Authorization: Bearer <access_token>` on every API request.
 
-**To grant a user access to your app**, add an entry to the `apps` map in the DynamoDB `websites-user-access` table (key: username, field: `apps.<appname>` = role string). The pre-auth Lambda checks this table on every login.
+**To grant user access**: add an entry to the `apps` map in DynamoDB table `websites-user-access` (key: username, field: `apps.<name>` = role string). The pre-auth Lambda checks this on every login.
 
 ---
 
 ## Step 7: CI Dashboard Reporting
 
-All projects should report build results to the platform CI dashboard. Add the `report-build` action as the last step in your workflow. It reads the ingest URL and token from SSM using the already-configured OIDC role — no secrets to configure.
+Add as the **last step** in your GitHub Actions workflow, **after** the OIDC credentials step:
 
 ```yaml
 - uses: chris-arsenault/platform/.github/actions/report-build@main
@@ -417,13 +457,11 @@ All projects should report build results to the platform CI dashboard. Add the `
     test-passed: "true"   # optional
 ```
 
-The dashboard stores build history in the shared RDS (`platform` database, `ci_builds` table) and is queryable via Grafana at `ci.ahara.io`.
+Reads ingest URL and token from SSM. No secrets to configure.
 
 ---
 
-## GitHub Actions Workflow
-
-Complete template with CI reporting:
+## GitHub Actions Workflow Template
 
 ```yaml
 name: Deploy
@@ -434,7 +472,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: <project>-deploy
+  group: <name>-deploy
   cancel-in-progress: false
 
 permissions:
@@ -474,6 +512,8 @@ All parameters are in `us-east-1`.
 | `/platform/cognito/user-pool-arn` | String | platform-services |
 | `/platform/cognito/domain` | String | platform-services |
 | `/platform/cognito/clients/<app>` | String | platform-services |
+| `/platform/cognito/alb-client-id` | String | platform-services |
+| `/platform/cognito/alb-client-secret` | SecureString | platform-services |
 
 ### /platform/rds/*
 
@@ -493,6 +533,13 @@ All parameters are in `us-east-1`.
 | `/platform/db/migrations-bucket` | String | platform-services |
 | `/platform/db/migrate-function` | String | platform-services |
 
+### /platform/ci/*
+
+| Parameter | Type | Source |
+|-----------|------|--------|
+| `/platform/ci/url` | String | platform-services |
+| `/platform/ci/ingest-token` | SecureString | platform-services |
+
 ### /platform/sonarqube/*
 
 | Parameter | Type | Source |
@@ -505,20 +552,6 @@ All parameters are in `us-east-1`.
 | Parameter | Type | Source |
 |-----------|------|--------|
 | `/platform/alarms/sns-topic-arn` | String | platform-services |
-
-### /platform/cognito/alb-* (for authenticate-cognito actions)
-
-| Parameter | Type | Source |
-|-----------|------|--------|
-| `/platform/cognito/alb-client-id` | String | platform-services |
-| `/platform/cognito/alb-client-secret` | SecureString | platform-services |
-
-### /platform/ci/*
-
-| Parameter | Type | Source |
-|-----------|------|--------|
-| `/platform/ci/url` | String | platform-services |
-| `/platform/ci/ingest-token` | SecureString | platform-services |
 
 ### /platform/network/*
 
@@ -533,17 +566,3 @@ All parameters are in `us-east-1`.
 | `/platform/network/public-subnet-ids` | StringList | platform-network |
 | `/platform/network/private-subnet-ids` | StringList | platform-network |
 | `/platform/network/route53-zone-id` | String | platform-network |
-
----
-
-## Rules
-
-- **Use the shared ALB** — do not create API Gateways or per-project load balancers
-- **Use the shared VPC** — do not create per-project VPCs
-- **Use the shared RDS** — do not create per-project database instances
-- **Use the shared Cognito pool** — do not create per-project user pools (exception: the-glass-frontier)
-- **Use SSM for cross-project config** — do not use `terraform_remote_state`
-- **Deploy scripts must be parameterless** — defaults baked in, CI overrides via env vars
-- **One deployer role per project** — scoped to least-privilege via the policy library
-- **All resources use the project prefix** — naming convention: `<prefix>-<resource>`
-- **Cost matters** — single VPC, shared ALB, shared RDS, fck-nat. Every new resource should use existing shared infrastructure first
