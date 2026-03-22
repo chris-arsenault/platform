@@ -281,11 +281,80 @@ Omit the `jwt-validation` action only if the endpoint is intentionally public (n
 
 ---
 
-## Step 5: Connect to Shared RDS
+## Step 5: Database (shared RDS + managed migrations)
 
-For projects that need relational data. Use the shared PostgreSQL 16 instance — do not create a new one.
+Use the shared PostgreSQL 16 instance — do not create a new RDS. The platform manages database creation, schema migrations, and seeding.
+
+### 5a. Register your project
+
+Your project must be registered in `var.migration_projects` in `~/src/platform-services/infrastructure/terraform/db-migrate.tf`. This maps your project name to a database name. The migration service creates the database automatically on first migration.
+
+### 5b. Migration file structure
+
+In your repo, create numbered SQL files:
+
+```
+db/migrations/001_create_tables.sql       # forward migrations (auto-triggered)
+db/migrations/002_add_indexes.sql
+db/migrations/rollback/002_add_indexes.sql # rollback for each migration
+db/migrations/rollback/001_create_tables.sql
+db/migrations/seed/001_initial_data.sql   # seed data (manual only)
+```
+
+Migration filenames must sort lexicographically in apply order. Use zero-padded numbers.
+
+### 5c. Deploy script integration
+
+Add this to your `scripts/deploy.sh` **before** `terraform apply`:
+
+```bash
+MIGRATIONS_BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
+  --query Parameter.Value --output text --region us-east-1)
+
+if [ -d "${ROOT_DIR}/db/migrations" ]; then
+  echo "Uploading migrations..."
+  aws s3 sync "${ROOT_DIR}/db/migrations/" \
+    "s3://${MIGRATIONS_BUCKET}/migrations/<project>/" \
+    --delete
+fi
+```
+
+When migration SQL files are uploaded, EventBridge triggers the migration Lambda automatically. Migrations run in order, within transactions, with checksum verification.
+
+### 5d. Manual operations
+
+Rollback, seed, and drop are triggered via direct Lambda invocation:
+
+```bash
+MIGRATE_FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+  --query Parameter.Value --output text --region us-east-1)
+
+# Rollback to a specific migration (rolls back everything after it)
+aws lambda invoke --function-name "$MIGRATE_FN" \
+  --payload '{"operation":"rollback","project":"<name>","target":"001_create_tables.sql"}' /dev/null
+
+# Rollback all migrations
+aws lambda invoke --function-name "$MIGRATE_FN" \
+  --payload '{"operation":"rollback","project":"<name>"}' /dev/null
+
+# Run seed data
+aws lambda invoke --function-name "$MIGRATE_FN" \
+  --payload '{"operation":"seed","project":"<name>"}' /dev/null
+
+# Drop the entire database (destructive)
+aws lambda invoke --function-name "$MIGRATE_FN" \
+  --payload '{"operation":"drop","project":"<name>"}' /dev/null
+```
+
+### 5e. Lambda VPC config
+
+Lambdas that read from the database must run in the platform VPC:
 
 ```hcl
+data "aws_ssm_parameter" "private_subnet_ids" {
+  name = "/platform/network/private-subnet-ids"
+}
+
 data "aws_ssm_parameter" "rds_address" {
   name = "/platform/rds/address"
 }
@@ -294,41 +363,6 @@ data "aws_ssm_parameter" "rds_port" {
   name = "/platform/rds/port"
 }
 
-data "aws_ssm_parameter" "rds_master_username" {
-  name = "/platform/rds/master-username"
-}
-
-data "aws_ssm_parameter" "rds_master_password" {
-  name = "/platform/rds/master-password"
-}
-```
-
-Create a per-project database and user:
-
-```hcl
-provider "postgresql" {
-  host     = nonsensitive(data.aws_ssm_parameter.rds_address.value)
-  port     = nonsensitive(data.aws_ssm_parameter.rds_port.value)
-  username = nonsensitive(data.aws_ssm_parameter.rds_master_username.value)
-  password = data.aws_ssm_parameter.rds_master_password.value
-  sslmode  = "require"
-}
-
-resource "postgresql_role" "app" {
-  name     = "<project>_app"
-  login    = true
-  password = random_password.db_app.result
-}
-
-resource "postgresql_database" "app" {
-  name  = "<project>"
-  owner = postgresql_role.app.name
-}
-```
-
-Lambdas accessing RDS must run in the VPC:
-
-```hcl
 resource "aws_lambda_function" "api" {
   # ...
   vpc_config {
@@ -337,6 +371,8 @@ resource "aws_lambda_function" "api" {
   }
 }
 ```
+
+Application credentials: create a per-project database user in your first migration (`001_create_tables.sql`) and use those credentials in your Lambda, or use the master credentials from SSM (`/platform/rds/master-username`, `/platform/rds/master-password`) for platform-internal services.
 
 ---
 
@@ -429,6 +465,13 @@ All parameters are in `us-east-1`.
 | `/platform/rds/master-username` | String | platform-services |
 | `/platform/rds/master-password` | SecureString | platform-services |
 | `/platform/rds/security-group-id` | String | platform-services |
+
+### /platform/db/*
+
+| Parameter | Type | Source |
+|-----------|------|--------|
+| `/platform/db/migrations-bucket` | String | platform-services |
+| `/platform/db/migrate-function` | String | platform-services |
 
 ### /platform/sonarqube/*
 
