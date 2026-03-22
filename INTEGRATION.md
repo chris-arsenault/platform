@@ -132,11 +132,20 @@ Add build steps before `terraform init` if your project has Lambda code or front
 
 ## Step 4: Expose a Backend via the Shared ALB
 
-This is how every backend service MUST be exposed. Do not use API Gateway.
+Every backend MUST use the shared ALB. Do not create API Gateways.
+
+There are two auth patterns — pick the right one:
+
+| Pattern | Use when | Auth flow |
+|---------|----------|-----------|
+| **ALB Cognito action** | Dashboards, server-rendered apps, admin UIs | ALB redirects to Cognito hosted UI, sets session cookie |
+| **Lambda JWT validation** | SPA API backends (React + Vite apps) | Frontend sends `Authorization: Bearer` token, Lambda validates against Cognito JWKS |
+
+**Most projects on this platform are SPAs** — use Lambda JWT validation. The ALB Cognito action uses redirect-based auth with cookies, which breaks `fetch()` calls from SPAs (302 redirects, cross-origin cookie issues).
+
+### Common infrastructure (both patterns)
 
 ```hcl
-# --- Read platform SSM params ---
-
 data "aws_ssm_parameter" "alb_listener_arn" {
   name = "/platform/network/alb-listener-arn"
 }
@@ -149,31 +158,11 @@ data "aws_ssm_parameter" "alb_zone_id" {
   name = "/platform/network/alb-zone-id"
 }
 
-data "aws_ssm_parameter" "vpc_id" {
-  name = "/platform/network/vpc-id"
-}
-
-data "aws_ssm_parameter" "private_subnet_ids" {
-  name = "/platform/network/private-subnet-ids"
-}
-
 data "aws_ssm_parameter" "route53_zone_id" {
   name = "/platform/network/route53-zone-id"
 }
 
-data "aws_ssm_parameter" "alb_cognito_pool_arn" {
-  name = "/platform/network/alb-cognito-pool-arn"
-}
-
-data "aws_ssm_parameter" "alb_cognito_client_id" {
-  name = "/platform/network/alb-cognito-client-id"
-}
-
-data "aws_ssm_parameter" "alb_cognito_domain" {
-  name = "/platform/network/alb-cognito-domain"
-}
-
-# --- Target group for your Lambda ---
+# --- Lambda target group ---
 
 resource "aws_lb_target_group" "api" {
   name        = "<prefix>-api-tg"
@@ -194,41 +183,7 @@ resource "aws_lambda_permission" "alb" {
   source_arn    = aws_lb_target_group.api.arn
 }
 
-# --- Listener rule (Cognito auth + forward) ---
-
-resource "aws_lb_listener_rule" "api" {
-  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
-  priority     = <unique-number>  # 200+ for consumer projects, must not conflict
-
-  condition {
-    host_header {
-      values = ["<service>.ahara.io"]
-    }
-  }
-
-  action {
-    type  = "authenticate-cognito"
-    order = 1
-
-    authenticate_cognito {
-      user_pool_arn              = nonsensitive(data.aws_ssm_parameter.alb_cognito_pool_arn.value)
-      user_pool_client_id        = nonsensitive(data.aws_ssm_parameter.alb_cognito_client_id.value)
-      user_pool_domain           = nonsensitive(data.aws_ssm_parameter.alb_cognito_domain.value)
-      on_unauthenticated_request = "authenticate"
-      scope                      = "openid email profile"
-      session_cookie_name        = "alb-auth"
-      session_timeout            = 3600
-    }
-  }
-
-  action {
-    type             = "forward"
-    order            = 2
-    target_group_arn = aws_lb_target_group.api.arn
-  }
-}
-
-# --- TLS cert (managed by your project, attached to shared listener) ---
+# --- TLS cert ---
 
 resource "aws_acm_certificate" "api" {
   domain_name       = "<service>.ahara.io"
@@ -277,12 +232,109 @@ resource "aws_route53_record" "api" {
 }
 ```
 
-**Listener rule priorities** — existing allocations:
-- 100: reverse proxy (dashboards.ahara.io) — owned by platform-network
+### Pattern A: SPA API backend (Lambda JWT validation)
+
+**Use this for React + Vite apps.** The frontend handles login via `amazon-cognito-identity-js` and sends `Authorization: Bearer <token>` on every request. The Lambda validates the JWT against Cognito's JWKS endpoint. The ALB just forwards — no auth action.
+
+```hcl
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
+  priority     = <unique-number>  # 200+ for consumer projects
+
+  condition {
+    host_header {
+      values = ["<service>.ahara.io"]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+```
+
+Your Lambda must validate the JWT. In Rust, use `jsonwebtoken` + `reqwest` to fetch `https://cognito-idp.us-east-1.amazonaws.com/<pool-id>/.well-known/jwks.json` and verify the token signature, expiry, audience, and issuer. In TypeScript, use `aws-jwt-verify`.
+
+Pass the Cognito pool ID and client ID as Lambda environment variables (read from SSM):
+
+```hcl
+data "aws_ssm_parameter" "cognito_user_pool_id" {
+  name = "/platform/cognito/user-pool-id"
+}
+
+data "aws_ssm_parameter" "cognito_client" {
+  name = "/platform/cognito/clients/<app>"
+}
+
+resource "aws_lambda_function" "api" {
+  # ...
+  environment {
+    variables = {
+      COGNITO_USER_POOL_ID = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
+      COGNITO_CLIENT_ID    = nonsensitive(data.aws_ssm_parameter.cognito_client.value)
+    }
+  }
+}
+```
+
+### Pattern B: Dashboard / server-rendered app (ALB Cognito action)
+
+**Use this for dashboards, admin UIs, and anything that isn't an SPA API.** The ALB redirects unauthenticated users to the Cognito hosted UI, then sets a session cookie. No application-level auth code needed.
+
+```hcl
+data "aws_ssm_parameter" "alb_cognito_pool_arn" {
+  name = "/platform/network/alb-cognito-pool-arn"
+}
+
+data "aws_ssm_parameter" "alb_cognito_client_id" {
+  name = "/platform/network/alb-cognito-client-id"
+}
+
+data "aws_ssm_parameter" "alb_cognito_domain" {
+  name = "/platform/network/alb-cognito-domain"
+}
+
+resource "aws_lb_listener_rule" "dashboard" {
+  listener_arn = nonsensitive(data.aws_ssm_parameter.alb_listener_arn.value)
+  priority     = <unique-number>
+
+  condition {
+    host_header {
+      values = ["<service>.ahara.io"]
+    }
+  }
+
+  action {
+    type  = "authenticate-cognito"
+    order = 1
+
+    authenticate_cognito {
+      user_pool_arn              = nonsensitive(data.aws_ssm_parameter.alb_cognito_pool_arn.value)
+      user_pool_client_id        = nonsensitive(data.aws_ssm_parameter.alb_cognito_client_id.value)
+      user_pool_domain           = nonsensitive(data.aws_ssm_parameter.alb_cognito_domain.value)
+      on_unauthenticated_request = "authenticate"
+      scope                      = "openid email profile"
+      session_cookie_name        = "alb-auth"
+      session_timeout            = 3600
+    }
+  }
+
+  action {
+    type             = "forward"
+    order            = 2
+    target_group_arn = aws_lb_target_group.dashboard.arn
+  }
+}
+```
+
+### Listener rule priorities
+
+| Priority | Host | Owner |
+|----------|------|-------|
+| 100 | dashboards.ahara.io | platform-network |
 
 Use 200+ for consumer projects. Do not reuse an existing priority.
-
-Omit the `authenticate-cognito` action only if the service is intentionally public.
 
 ---
 
