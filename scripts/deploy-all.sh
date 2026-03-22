@@ -34,10 +34,10 @@ echo
 # Layer 0: Control plane (IAM roles, state buckets, GitHub secrets)
 deploy platform-control
 
-# Layer 1: Infrastructure (VPC, ALB, VPN)
-deploy platform-network
-
-# Layer 2: Shared services (Cognito, RDS, observability)
+# Layer 1: Shared services (Cognito, RDS, observability)
 deploy platform-services
+
+# Layer 2: Infrastructure (VPC, ALB, VPN — reads Cognito SSM params from layer 1)
+deploy platform-network
 
 echo -e "${GREEN}${BOLD}All platform layers deployed.${RESET}"
