@@ -371,6 +371,8 @@ Filenames must sort lexicographically. Use zero-padded numbers.
 - `ALTER DEFAULT PRIVILEGES` — the platform configures these
 - `CREATE DATABASE` — the platform creates the database
 
+**Seed files must be idempotent.** `db-seed` can be run multiple times — the platform does not track or deduplicate seed runs. Use `INSERT ... ON CONFLICT DO NOTHING` or `ON CONFLICT DO UPDATE` for data, and `IF NOT EXISTS` for any DDL.
+
 ### 5d. Platform CLI commands
 
 All database commands are in `~/src/platform/bin/` (run `platform-setup` once to add to PATH). Commands operate on the current working directory, read config from `platform.yml`, require no arguments:
