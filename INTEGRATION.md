@@ -204,18 +204,16 @@ resource "aws_lb_listener_rule" "api" {
   }
 
   action {
-    type  = "jwt-validation"
-    order = 1
+    type = "jwt-validation"
 
-    jwt_validation_config {
-      jwks_endpoint = local.cognito_jwks
+    jwt_validation {
       issuer        = local.cognito_issuer
+      jwks_endpoint = local.cognito_jwks
     }
   }
 
   action {
     type             = "forward"
-    order            = 2
     target_group_arn = aws_lb_target_group.api.arn
   }
 }
