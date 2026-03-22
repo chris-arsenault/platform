@@ -1,14 +1,7 @@
 name: Report Build
-description: Send build results to the platform CI dashboard
+description: Send build results to the platform CI dashboard. Requires AWS credentials (OIDC role) to be configured.
 
 inputs:
-  webhook-url:
-    description: CI ingest endpoint
-    required: true
-  token:
-    description: Ingest auth token
-    required: false
-    default: ""
   status:
     description: Job status (success/failure/cancelled)
     required: false
@@ -30,10 +23,8 @@ runs:
   using: composite
   steps:
     - run: |
-        AUTH_HEADER=""
-        if [ -n "${{ inputs.token }}" ]; then
-          AUTH_HEADER="-H \"Authorization: Bearer ${{ inputs.token }}\""
-        fi
+        WEBHOOK_URL=$(aws ssm get-parameter --name /platform/ci/url --query Parameter.Value --output text --region us-east-1)
+        TOKEN=$(aws ssm get-parameter --name /platform/ci/ingest-token --with-decryption --query Parameter.Value --output text --region us-east-1)
 
         BODY=$(cat <<'ENDJSON'
         {
@@ -48,7 +39,6 @@ runs:
         ENDJSON
         )
 
-        # Add optional fields
         BODY=$(echo "$BODY" | python3 -c "
         import sys, json
         d = json.load(sys.stdin)
@@ -61,8 +51,8 @@ runs:
         print(json.dumps(d))
         ")
 
-        curl -sf -X POST "${{ inputs.webhook-url }}/api/ci/report" \
+        curl -sf -X POST "${WEBHOOK_URL}/api/ci/report" \
           -H "Content-Type: application/json" \
-          ${AUTH_HEADER} \
+          -H "Authorization: Bearer ${TOKEN}" \
           -d "$BODY" || echo "::warning::Failed to report build status"
       shell: bash
