@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - AWS credentials with S3 access to all buckets
-#   - platform-control has been applied (creates the shared bucket)
+#   - platform-control deploy script has run (creates the shared bucket)
 #
 # This script copies state files, it does NOT delete from old buckets.
 
@@ -57,6 +57,7 @@ echo
 echo -e "${GREEN}${BOLD}State files copied.${RESET}"
 echo
 echo "Next steps:"
-echo "  1. In each project, run: terraform init -reconfigure -backend-config bucket=${NEW_BUCKET}"
-echo "  2. Run: terraform plan  (should show no changes)"
-echo "  3. Once verified, old buckets can be emptied and deleted"
+echo "  1. Run each project's deploy script (scripts/deploy.sh) — it will"
+echo "     pick up the new bucket from its default and re-init automatically."
+echo "  2. Verify terraform plan shows no unexpected changes."
+echo "  3. Once verified, old buckets can be emptied and deleted."
