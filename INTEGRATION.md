@@ -26,10 +26,11 @@
 
 - **Frontend**: React + Vite (TypeScript), static assets on S3 + CloudFront
 - **Backend**: Rust Lambda preferred. TypeScript (Node 24) Lambda when Rust is overkill.
-- **TLS**: Use `rustls` + `webpki-roots` for all Rust PostgreSQL and HTTPS connections. Do NOT use `native-tls` / `openssl` — they require system OpenSSL headers and break cross-compilation to Lambda (arm64). Use `tokio-postgres-rustls` for database TLS.
+- **TLS**: Use `rustls` for all Rust TLS connections. Do NOT use `native-tls` / `openssl` — they require system headers and break cross-compilation to Lambda. For RDS connections, embed the AWS RDS CA bundle (`certs/rds-global-bundle.pem` from `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`) and build a `RootCertStore` from it. Do NOT use `webpki-roots` for RDS — AWS certs are not in the Mozilla trust store. Do NOT disable cert verification. Use `tokio-postgres-rustls` + `rustls-pemfile`.
 - **Data**: S3 for most storage. DynamoDB for key-value. Shared RDS for relational.
 - **Auth**: ALB `jwt-validation` action validates Bearer tokens. Frontend uses `amazon-cognito-identity-js` with in-app login form.
 - **Lambda runtime**: `provided.al2023` for Rust, `nodejs24.x` for TypeScript. Build Rust Lambdas with `cargo lambda build --release`.
+- **Rustls init**: Call `rustls::crypto::ring::default_provider().install_default()` at the top of `main()` before any TLS connection. Rustls 0.23+ does not auto-detect the crypto provider.
 
 ---
 
