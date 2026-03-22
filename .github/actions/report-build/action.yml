@@ -1,0 +1,68 @@
+name: Report Build
+description: Send build results to the platform CI dashboard
+
+inputs:
+  webhook-url:
+    description: CI ingest endpoint
+    required: true
+  token:
+    description: Ingest auth token
+    required: false
+    default: ""
+  status:
+    description: Job status (success/failure/cancelled)
+    required: false
+    default: ${{ job.status }}
+  lint-passed:
+    description: Whether lint passed (true/false/empty)
+    required: false
+    default: ""
+  test-passed:
+    description: Whether tests passed (true/false/empty)
+    required: false
+    default: ""
+  duration-seconds:
+    description: Build duration in seconds
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - run: |
+        AUTH_HEADER=""
+        if [ -n "${{ inputs.token }}" ]; then
+          AUTH_HEADER="-H \"Authorization: Bearer ${{ inputs.token }}\""
+        fi
+
+        BODY=$(cat <<'ENDJSON'
+        {
+          "repo": "${{ github.repository }}",
+          "workflow": "${{ github.workflow }}",
+          "status": "${{ inputs.status }}",
+          "branch": "${{ github.ref_name }}",
+          "commit_sha": "${{ github.sha }}",
+          "run_id": "${{ github.run_id }}",
+          "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        }
+        ENDJSON
+        )
+
+        # Add optional fields
+        BODY=$(echo "$BODY" | python3 -c "
+        import sys, json
+        d = json.load(sys.stdin)
+        dur = '${{ inputs.duration-seconds }}'
+        lint = '${{ inputs.lint-passed }}'
+        test = '${{ inputs.test-passed }}'
+        if dur: d['duration_seconds'] = int(dur)
+        if lint: d['lint_passed'] = lint == 'true'
+        if test: d['test_passed'] = test == 'true'
+        print(json.dumps(d))
+        ")
+
+        curl -sf -X POST "${{ inputs.webhook-url }}/api/ci/report" \
+          -H "Content-Type: application/json" \
+          ${AUTH_HEADER} \
+          -d "$BODY" || echo "::warning::Failed to report build status"
+      shell: bash
