@@ -14,14 +14,23 @@ The platform is a set of shared AWS infrastructure managed across three repos. A
 | `platform-services` | `~/src/platform-services` | Manages shared Cognito user pool, pre-auth Lambda, DynamoDB user-access table, SSM parameter bus, budget/cost alerts |
 | `platform-network` | `~/src/platform-network` | Manages VPC (10.42.0.0/16), public/private subnets, shared ALB with HTTPS listener, WireGuard VPN, NAT, Route53 DNS |
 
-### Tech Stack
+### Preferred Application Stack
+
+- **Frontend**: React + Vite (TypeScript)
+- **Backend**: Rust Lambdas preferred; TypeScript (Node 24) Lambdas acceptable when Rust is overkill
+- **Data**: S3 for most storage needs. DynamoDB when you need key-value lookups. Shared PostgreSQL RDS for relational data.
+- **Auth**: Cognito (shared pool for personal projects, separate pool for Glass Frontier)
+
+### Infrastructure Stack
 
 - **IaC**: Terraform >= 1.12, AWS provider ~> 6.0
 - **State**: S3 backend with native lock files (`use_lockfile = true`), one bucket per project
 - **CI/CD**: GitHub Actions with OIDC federation (no long-lived credentials)
-- **Auth**: Cognito user pool shared across all personal projects. The Glass Frontier project has its own separate Cognito pool.
 - **DNS**: Route53, zone `ahara.io` (zone ID published to SSM)
-- **VPC**: Single VPC in us-east-1, two public subnets (AZ a/b), one private subnet
+- **VPC**: Single VPC in us-east-1, two public subnets (AZ a/b), two private subnets (AZ a/b)
+- **Database**: Shared PostgreSQL 16 on RDS `db.t4g.micro` — per-project databases on the same instance
+- **Load Balancing**: Shared ALB with host-based routing — projects attach their own listener rules and certs
+- **NAT**: fck-nat (no NAT Gateway — cost matters)
 
 ---
 
@@ -357,6 +366,73 @@ data "aws_ssm_parameter" "sonarqube_ci_token" {
 }
 ```
 
+### Shared RDS (from platform-services)
+
+A shared PostgreSQL 16 instance (`db.t4g.micro`) is available for projects that need relational data. Each project should create its own database and application user — do not use the master credentials directly in application code.
+
+```hcl
+data "aws_ssm_parameter" "rds_endpoint" {
+  name = "/platform/rds/endpoint"
+}
+
+data "aws_ssm_parameter" "rds_address" {
+  name = "/platform/rds/address"
+}
+
+data "aws_ssm_parameter" "rds_port" {
+  name = "/platform/rds/port"
+}
+
+data "aws_ssm_parameter" "rds_master_username" {
+  name = "/platform/rds/master-username"
+}
+
+data "aws_ssm_parameter" "rds_master_password" {
+  name = "/platform/rds/master-password"
+}
+
+data "aws_ssm_parameter" "rds_security_group_id" {
+  name = "/platform/rds/security-group-id"
+}
+```
+
+**Creating a per-project database**: Use a `postgresql` Terraform provider or a provisioner to connect with the master credentials and create a project-specific database and user:
+
+```hcl
+provider "postgresql" {
+  host     = nonsensitive(data.aws_ssm_parameter.rds_address.value)
+  port     = nonsensitive(data.aws_ssm_parameter.rds_port.value)
+  username = nonsensitive(data.aws_ssm_parameter.rds_master_username.value)
+  password = data.aws_ssm_parameter.rds_master_password.value
+  sslmode  = "require"
+}
+
+resource "postgresql_role" "app" {
+  name     = "<project>_app"
+  login    = true
+  password = random_password.db_app.result
+}
+
+resource "postgresql_database" "app" {
+  name  = "<project>"
+  owner = postgresql_role.app.name
+}
+```
+
+**Connectivity**: The RDS instance is in the VPC private subnets. Lambdas that need database access must run inside the VPC. Add `vpc_config` to your Lambda:
+
+```hcl
+resource "aws_lambda_function" "api" {
+  # ...
+  vpc_config {
+    subnet_ids         = split(",", nonsensitive(data.aws_ssm_parameter.private_subnet_ids.value))
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+}
+```
+
+The Lambda's security group must allow outbound traffic to port 5432, and the RDS security group already allows ingress from the VPC CIDR (`10.42.0.0/16`).
+
 ### Observability (from platform-services)
 
 To send alarms to the shared SNS topic:
@@ -396,6 +472,17 @@ All parameters are in `us-east-1`.
 | `/platform/sonarqube/cognito-client-id` | String | platform-services |
 | `/platform/sonarqube/cognito-client-secret` | SecureString | platform-services |
 
+### /platform/rds/*
+
+| Parameter | Type | Source |
+|-----------|------|--------|
+| `/platform/rds/endpoint` | String | platform-services |
+| `/platform/rds/address` | String | platform-services |
+| `/platform/rds/port` | String | platform-services |
+| `/platform/rds/master-username` | String | platform-services |
+| `/platform/rds/master-password` | SecureString | platform-services |
+| `/platform/rds/security-group-id` | String | platform-services |
+
 ### /platform/alarms/*
 
 | Parameter | Type | Source |
@@ -413,7 +500,7 @@ All parameters are in `us-east-1`.
 | `/platform/network/alb-security-group-id` | String | platform-network |
 | `/platform/network/vpc-id` | String | platform-network |
 | `/platform/network/public-subnet-ids` | StringList | platform-network |
-| `/platform/network/private-subnet-id` | String | platform-network |
+| `/platform/network/private-subnet-ids` | StringList | platform-network |
 | `/platform/network/route53-zone-id` | String | platform-network |
 | `/platform/network/alb-cognito-pool-arn` | String | platform-network |
 | `/platform/network/alb-cognito-client-id` | String | platform-network |
