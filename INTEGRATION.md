@@ -62,10 +62,11 @@ module "<name>_project" {
 |--------|----------------------------|
 | `state` | Always required — access to the shared state bucket |
 | `api` | Lambda functions, CloudWatch Logs |
+| `cognito-client` | Creating a Cognito client on the shared pool (most apps need this) |
 | `bedrock` | Bedrock model invocation |
 | `iam` | Creating IAM roles scoped to your prefix |
 | `static-website` | S3 + CloudFront static sites |
-| `platform-services` | Cognito, DynamoDB, SSM writes, SNS, ACM, Route53 |
+| `platform-services` | Platform-level only: Cognito pools, DynamoDB, SSM writes, SNS, ACM, Route53 |
 
 ---
 
@@ -341,31 +342,32 @@ resource "aws_lambda_function" "api" {
 
 ---
 
-## Step 6: Cognito Client Registration
+## Step 6: Cognito Client (self-service)
 
-Auth is handled at the ALB layer (Step 4) — your Lambda receives pre-validated requests. But your frontend needs a Cognito client to obtain tokens.
+Auth is handled at the ALB layer (Step 4) — your Lambda receives pre-validated requests. Your frontend needs a Cognito client to obtain tokens. **Create it in your own project** — no platform-services change required.
 
-**To register a new Cognito client for your app:**
-
-1. Add an entry to `var.cognito_clients` in `~/src/platform-services/infrastructure/terraform/variables.tf`
-2. Apply platform-services
-3. The client ID is published to `/platform/cognito/clients/<key>`
-
-**To grant a user access to your app**, add an entry to the `apps` map in the DynamoDB `websites-user-access` table (key: username, field: `apps.<appname>` = role). The pre-auth Lambda checks this table on every login.
-
-**Frontend auth flow**: Use `amazon-cognito-identity-js` with an in-app login form. The frontend authenticates directly with Cognito, receives tokens, and sends `Authorization: Bearer <access_token>` on every API request. The ALB `jwt-validation` action validates the token before it reaches your Lambda.
-
-Frontend config (pass these as build-time env vars or runtime config):
+Include `"cognito-client"` in your project's `policy_modules` (Step 1), then:
 
 ```hcl
 data "aws_ssm_parameter" "cognito_user_pool_id" {
   name = "/platform/cognito/user-pool-id"
 }
 
-data "aws_ssm_parameter" "cognito_client" {
-  name = "/platform/cognito/clients/<app>"
+resource "aws_cognito_user_pool_client" "app" {
+  name         = "<prefix>-app"
+  user_pool_id = nonsensitive(data.aws_ssm_parameter.cognito_user_pool_id.value)
+
+  explicit_auth_flows = [
+    "ALLOW_USER_PASSWORD_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH",
+    "ALLOW_USER_SRP_AUTH"
+  ]
 }
 ```
+
+Pass the client ID and pool ID to your frontend as build-time env vars or runtime config. The frontend uses `amazon-cognito-identity-js` with an in-app login form, authenticates directly with Cognito, and sends `Authorization: Bearer <access_token>` on every API request.
+
+**To grant a user access to your app**, add an entry to the `apps` map in the DynamoDB `websites-user-access` table (key: username, field: `apps.<appname>` = role string). The pre-auth Lambda checks this table on every login.
 
 ---
 
