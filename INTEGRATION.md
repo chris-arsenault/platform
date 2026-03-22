@@ -24,7 +24,7 @@ The platform is a set of shared AWS infrastructure managed across three repos. A
 ### Infrastructure Stack
 
 - **IaC**: Terraform >= 1.12, AWS provider ~> 6.0
-- **State**: S3 backend with native lock files (`use_lockfile = true`), one bucket per project
+- **State**: Single S3 bucket (`tfstate-559098897826`) with namespaced keys, native lock files (`use_lockfile = true`)
 - **CI/CD**: GitHub Actions with OIDC federation (no long-lived credentials)
 - **DNS**: Route53, zone `ahara.io` (zone ID published to SSM)
 - **VPC**: Single VPC in us-east-1, two public subnets (AZ a/b), two private subnets (AZ a/b)
@@ -95,6 +95,14 @@ After merging to main, `platform-control` CI applies automatically. This creates
 
 ### 2a. Backend configuration
 
+All projects share a single state bucket (`tfstate-559098897826`). The `key` determines where your state lives within it.
+
+**Key naming convention:**
+- Platform repos: `platform/<name>.tfstate` (e.g. `platform/control.tfstate`, `platform/network.tfstate`)
+- Consumer projects: `projects/<name>.tfstate` (e.g. `projects/websites.tfstate`, `projects/svap.tfstate`)
+
+**Never use bare `terraform.tfstate`** — the bucket policy denies writes to root-level keys. Always use a `<category>/<name>.tfstate` path.
+
 ```hcl
 terraform {
   required_version = ">= 1.12"
@@ -106,7 +114,7 @@ terraform {
   }
   backend "s3" {
     region       = "us-east-1"
-    key          = "<project-name>.tfstate"
+    key          = "projects/<name>.tfstate"
     encrypt      = true
     use_lockfile = true
   }
@@ -124,7 +132,7 @@ provider "aws" {
 }
 ```
 
-The `bucket` is provided at init time via `-backend-config` or the deploy script default.
+The `bucket` is provided at init time via the deploy script default. The `key` is hardcoded in the backend block and must match the `state_key_prefix` configured in platform-control (your deployer role only has write access to your prefix).
 
 ### 2b. Deploy script
 
@@ -137,7 +145,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${ROOT_DIR}/infrastructure/terraform"
 
-STATE_BUCKET="${STATE_BUCKET:-tf-state-<prefix>-559098897826}"
+STATE_BUCKET="${STATE_BUCKET:-tfstate-559098897826}"
 STATE_REGION="${STATE_REGION:-us-east-1}"
 
 terraform -chdir="${TF_DIR}" init \
@@ -148,7 +156,7 @@ terraform -chdir="${TF_DIR}" init \
 terraform -chdir="${TF_DIR}" apply -auto-approve
 ```
 
-The script must be parameterless — `STATE_BUCKET` defaults to the correct value and is only overridden in CI via the injected secret.
+The script must be parameterless — `STATE_BUCKET` defaults to the shared bucket and is only overridden in CI via the injected secret.
 
 ### 2c. GitHub Actions workflow
 
