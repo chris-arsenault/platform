@@ -21,7 +21,10 @@ BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
 FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
   --query Parameter.Value --output text --region "${REGION}")
 
-S3_KEY="restores/${PROJECT}/$(date +%Y%m%d-%H%M%S)-$(basename "${SQL_FILE}")"
+S3_KEY="restores/${PROJECT}/restore.sql"
+
+echo "Clearing previous restore files..."
+aws s3 rm "s3://${BUCKET}/restores/${PROJECT}/" --recursive --quiet 2>/dev/null || true
 
 echo "Uploading dump to s3://${BUCKET}/${S3_KEY}..."
 aws s3 cp "${SQL_FILE}" "s3://${BUCKET}/${S3_KEY}" --quiet
