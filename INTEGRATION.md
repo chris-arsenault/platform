@@ -470,21 +470,17 @@ Pass the client ID and pool ID to your frontend as build-time env vars or runtim
 
 ### 7a. TypeScript / React projects
 
-Install the standard plugins:
+Install dependencies including shared custom rules:
 
 ```bash
 npm install -D eslint @eslint/js typescript-eslint eslint-plugin-react \
   eslint-plugin-react-hooks eslint-plugin-react-refresh eslint-plugin-react-perf \
   eslint-plugin-jsx-a11y eslint-plugin-sonarjs eslint-config-prettier prettier
+
+npm install -D github:chris-arsenault/ahara-standards
 ```
 
-Copy the platform's shared custom rules into your project:
-
-```bash
-cp -r ~/src/platform/lint/eslint-rules/ ./eslint-rules/
-```
-
-Create `eslint.config.js` (flat config):
+Create `eslint.config.js` importing rules from `@ahara/standards`:
 
 ```js
 import js from "@eslint/js";
@@ -497,22 +493,17 @@ import jsxA11y from "eslint-plugin-jsx-a11y";
 import sonarjs from "eslint-plugin-sonarjs";
 import prettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
-import maxJsxProps from "./eslint-rules/max-jsx-props.js";
-import noInlineStyles from "./eslint-rules/no-inline-styles.js";
-import noDirectStoreImport from "./eslint-rules/no-direct-store-import.js";
-import noDirectFetch from "./eslint-rules/no-direct-fetch.js";
-import noEscapeHatches from "./eslint-rules/no-escape-hatches.js";
-import noManualAsyncState from "./eslint-rules/no-manual-async-state.js";
-import noManualViewHeader from "./eslint-rules/no-manual-view-header.js";
-import noManualExpandState from "./eslint-rules/no-manual-expand-state.js";
-import noRawUndefinedUnion from "./eslint-rules/no-raw-undefined-union.js";
-import noNonVitestTesting from "./eslint-rules/no-non-vitest-testing.js";
-import noJsFileExtension from "./eslint-rules/no-js-file-extension.js";
+import {
+  maxJsxProps, noInlineStyles, noDirectStoreImport, noDirectFetch,
+  noEscapeHatches, noManualAsyncState, noManualViewHeader,
+  noManualExpandState, noRawUndefinedUnion, noNonVitestTesting,
+  noJsFileExtension,
+} from "@ahara/standards/eslint-rules";
 
 export default tseslint.config(
   { ignores: ["node_modules/", "dist/"] },
 
-  // Complexity limits — these are not negotiable
+  // Complexity limits — not negotiable
   {
     ...js.configs.recommended,
     rules: {
@@ -523,30 +514,20 @@ export default tseslint.config(
     },
   },
 
-  // TypeScript
   ...tseslint.configs.recommended,
 
-  // React + Browser + Custom rules
   {
     files: ["src/**/*.{ts,tsx}"],
     plugins: {
-      react,
-      "react-hooks": reactHooks,
-      "react-refresh": reactRefresh,
-      "react-perf": reactPerf,
-      "jsx-a11y": jsxA11y,
+      react, "react-hooks": reactHooks, "react-refresh": reactRefresh,
+      "react-perf": reactPerf, "jsx-a11y": jsxA11y,
       local: {
         rules: {
-          "max-jsx-props": maxJsxProps,
-          "no-inline-styles": noInlineStyles,
-          "no-direct-store-import": noDirectStoreImport,
-          "no-direct-fetch": noDirectFetch,
-          "no-escape-hatches": noEscapeHatches,
-          "no-manual-async-state": noManualAsyncState,
-          "no-manual-view-header": noManualViewHeader,
-          "no-manual-expand-state": noManualExpandState,
-          "no-raw-undefined-union": noRawUndefinedUnion,
-          "no-non-vitest-testing": noNonVitestTesting,
+          "max-jsx-props": maxJsxProps, "no-inline-styles": noInlineStyles,
+          "no-direct-store-import": noDirectStoreImport, "no-direct-fetch": noDirectFetch,
+          "no-escape-hatches": noEscapeHatches, "no-manual-async-state": noManualAsyncState,
+          "no-manual-view-header": noManualViewHeader, "no-manual-expand-state": noManualExpandState,
+          "no-raw-undefined-union": noRawUndefinedUnion, "no-non-vitest-testing": noNonVitestTesting,
           "no-js-file-extension": noJsFileExtension,
         },
       },
@@ -587,21 +568,21 @@ export default tseslint.config(
 );
 ```
 
-**Custom rules** (source: `~/src/platform/lint/eslint-rules/`):
+**Custom rules** (source: [ahara-standards](https://github.com/chris-arsenault/ahara-standards) `rules/eslint/`):
 
 | Rule | Severity | Purpose |
 |------|----------|---------|
-| `max-jsx-props` | warn | Max 12 props per element. Forces Parameter Object pattern. |
-| `no-inline-styles` | error | No inline style objects. Use CSS modules or classes. |
-| `no-direct-fetch` | error | No raw `fetch()`. Use shared API wrapper with auth. |
+| `max-jsx-props` | warn | Max 12 props. Forces Parameter Object pattern. |
+| `no-inline-styles` | error | No inline style objects. Use CSS classes. |
+| `no-direct-fetch` | error | No raw `fetch()`. Use shared API wrapper. |
 | `no-direct-store-import` | warn | Views must not import stores directly. |
-| `no-escape-hatches` | error | No `getInternal*` methods, no config fallback defaults, no deprecated stubs. |
-| `no-manual-async-state` | warn | No manual loading/error state. Use shared async hooks. |
-| `no-manual-view-header` | warn | No manual view header rendering. Use shared component. |
-| `no-manual-expand-state` | warn | No manual expand/collapse state. Use shared hook. |
-| `no-raw-undefined-union` | warn | No `\| undefined` or `?:` in property signatures. Use named `Optional<T>` aliases. Prevents LLM-added defensive optionality. |
-| `no-non-vitest-testing` | error | All tests must use vitest. |
-| `no-js-file-extension` | error | Use `.ts`/`.tsx`, not `.js`. |
+| `no-escape-hatches` | error | No `getInternal*`, no config fallbacks, no deprecated stubs. |
+| `no-manual-async-state` | warn | Use shared async hooks, not manual loading/error state. |
+| `no-manual-view-header` | warn | Use shared header component. |
+| `no-manual-expand-state` | warn | Use shared expand/collapse hook. |
+| `no-raw-undefined-union` | warn | No `\| undefined` or `?:`. Use named `Optional<T>`. Catches LLM-added defensive optionality. |
+| `no-non-vitest-testing` | error | Vitest only. |
+| `no-js-file-extension` | error | `.ts`/`.tsx` only. |
 
 Add to `package.json` scripts:
 
@@ -620,11 +601,11 @@ Add to `package.json` scripts:
 
 ### 7b. Rust projects
 
-Copy the platform lint config into your project root:
+Copy lint configs from [ahara-standards](https://github.com/chris-arsenault/ahara-standards):
 
 ```bash
-cp ~/src/platform/lint/clippy.toml ./clippy.toml
-cp ~/src/platform/lint/rustfmt.toml ./rustfmt.toml
+cp ~/src/ahara-standards/rules/rust/clippy.toml ./clippy.toml
+cp ~/src/ahara-standards/rules/rust/rustfmt.toml ./rustfmt.toml
 ```
 
 The clippy config enforces:
