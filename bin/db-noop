@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Records a migration as applied without executing it.
+# Usage: db-noop <filename> <comment>
+set -euo pipefail
+
+FILENAME="${1:?Usage: db-noop <filename> <comment>}"
+COMMENT="${2:?Usage: db-noop <filename> <comment> — comment is required}"
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+MIGRATIONS_DIR=$(platform-manifest migrations)
+
+# Upload the file first so the Lambda can checksum it
+BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
+  --query Parameter.Value --output text --region "${REGION}")
+
+if [ -f "${MIGRATIONS_DIR}/${FILENAME}" ]; then
+  aws s3 cp "${MIGRATIONS_DIR}/${FILENAME}" "s3://${BUCKET}/migrations/${PROJECT}/${FILENAME}" --quiet
+else
+  echo "ERROR: ${MIGRATIONS_DIR}/${FILENAME} not found"
+  exit 1
+fi
+
+FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+  --query Parameter.Value --output text --region "${REGION}")
+
+echo "Recording noop: ${FILENAME}"
+echo "Comment: ${COMMENT}"
+
+PAYLOAD=$(python3 -c "
+import json
+print(json.dumps({
+    'operation': 'noop',
+    'project': '${PROJECT}',
+    'target': '${FILENAME}',
+    'comment': '${COMMENT}'
+}))
+")
+
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "${PAYLOAD}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "Noop FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
