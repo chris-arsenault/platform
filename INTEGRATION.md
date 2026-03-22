@@ -319,7 +319,7 @@ if [ -d "${ROOT_DIR}/db/migrations" ]; then
 fi
 ```
 
-When migration SQL files are uploaded, EventBridge triggers the migration Lambda automatically. Migrations run in order, within transactions, with checksum verification.
+When migration SQL files are uploaded, EventBridge triggers the migration Lambda automatically. Migrations run in order, within transactions, with checksum verification. Concurrent runs for the same project are prevented via PostgreSQL advisory locks. All operations are logged to an audit trail in the `platform_ops` database (survives project database drops).
 
 ### 5d. Manual operations
 
@@ -405,7 +405,25 @@ Pass the client ID and pool ID to your frontend as build-time env vars or runtim
 
 ---
 
+## Step 7: CI Dashboard Reporting
+
+All projects should report build results to the platform CI dashboard. Add the `report-build` action as the last step in your workflow. It reads the ingest URL and token from SSM using the already-configured OIDC role — no secrets to configure.
+
+```yaml
+- uses: chris-arsenault/platform/.github/actions/report-build@main
+  if: always()
+  with:
+    lint-passed: "true"   # optional
+    test-passed: "true"   # optional
+```
+
+The dashboard stores build history in the shared RDS (`platform` database, `ci_builds` table) and is queryable via Grafana at `ci.ahara.io`.
+
+---
+
 ## GitHub Actions Workflow
+
+Complete template with CI reporting:
 
 ```yaml
 name: Deploy
@@ -438,6 +456,8 @@ jobs:
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
         run: bash scripts/deploy.sh
+      - uses: chris-arsenault/platform/.github/actions/report-build@main
+        if: always()
 ```
 
 ---
@@ -486,6 +506,20 @@ All parameters are in `us-east-1`.
 |-----------|------|--------|
 | `/platform/alarms/sns-topic-arn` | String | platform-services |
 
+### /platform/cognito/alb-* (for authenticate-cognito actions)
+
+| Parameter | Type | Source |
+|-----------|------|--------|
+| `/platform/cognito/alb-client-id` | String | platform-services |
+| `/platform/cognito/alb-client-secret` | SecureString | platform-services |
+
+### /platform/ci/*
+
+| Parameter | Type | Source |
+|-----------|------|--------|
+| `/platform/ci/url` | String | platform-services |
+| `/platform/ci/ingest-token` | SecureString | platform-services |
+
 ### /platform/network/*
 
 | Parameter | Type | Source |
@@ -499,9 +533,6 @@ All parameters are in `us-east-1`.
 | `/platform/network/public-subnet-ids` | StringList | platform-network |
 | `/platform/network/private-subnet-ids` | StringList | platform-network |
 | `/platform/network/route53-zone-id` | String | platform-network |
-| `/platform/network/alb-cognito-pool-arn` | String | platform-network |
-| `/platform/network/alb-cognito-client-id` | String | platform-network |
-| `/platform/network/alb-cognito-domain` | String | platform-network |
 
 ---
 

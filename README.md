@@ -1,27 +1,37 @@
 # Platform
 
-Index repo for the platform layer — shared AWS infrastructure, identity, and deployment management.
+Index repo for the platform layer — shared AWS infrastructure, identity, deployment management, and CI tooling.
 
 ## Repos
 
 | Repo | Purpose | Path |
 |------|---------|------|
-| [platform-control](https://github.com/chris-arsenault/platform-control) | IAM deployer roles, OIDC, state buckets, GitHub secrets | `~/src/platform-control` |
-| [platform-services](https://github.com/chris-arsenault/platform-services) | Cognito, auth-trigger, DynamoDB user-access, SSM bus, observability | `~/src/platform-services` |
-| [platform-network](https://github.com/chris-arsenault/platform-network) | VPC, subnets, WireGuard VPN, shared ALB, NAT, DNS | `~/src/platform-network` |
+| [platform-control](https://github.com/chris-arsenault/platform-control) | IAM deployer roles, OIDC, shared state bucket, GitHub secrets | `~/src/platform-control` |
+| [platform-services](https://github.com/chris-arsenault/platform-services) | Cognito, auth-trigger, shared RDS, database migrations, CI dashboard, observability | `~/src/platform-services` |
+| [platform-network](https://github.com/chris-arsenault/platform-network) | VPC, subnets, shared ALB, WireGuard VPN, NAT, DNS | `~/src/platform-network` |
 | [truenas](https://github.com/chris-arsenault/truenas) | TrueNAS server IaC, Docker Compose stacks (SonarQube) | `~/src/truenas` |
 
-## Dependency Order
+## Deploy Order
 
 ```
-platform-control  (creates deployer roles + state buckets)
+platform-control   (IAM roles, shared state bucket, GitHub secrets)
        │
-       ├── platform-network  (VPC, ALB, VPN)
-       ├── platform-services (Cognito, auth, observability)
+       ├── platform-services  (Cognito, RDS, migrations, CI ingest, observability)
        │
-       └── consuming projects (websites, svap, the-canonry, etc.)
+       └── platform-network   (VPC, ALB, VPN — reads Cognito SSM from services)
+              │
+              └── consuming projects (websites, svap, the-canonry, etc.)
 ```
+
+Deploy all: `scripts/deploy-all.sh`
+
+## This Repo Also Contains
+
+- `INTEGRATION.md` — canonical instructions for AI agents integrating projects with the platform
+- `.github/actions/report-build/` — composite GitHub Action for CI dashboard reporting
+- `scripts/deploy-all.sh` — deploys all platform repos in order
+- `scripts/migrate-state.sh` — one-time migration from per-project state buckets to shared bucket
 
 ## Integration
 
-See [INTEGRATION.md](INTEGRATION.md) for instructions on integrating a new project with this platform.
+See [INTEGRATION.md](INTEGRATION.md) for full instructions.
