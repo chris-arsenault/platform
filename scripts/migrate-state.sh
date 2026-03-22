@@ -5,17 +5,62 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - AWS credentials with S3 access to all buckets
-#   - platform-control deploy script has run (creates the shared bucket)
 #
-# This script copies state files, it does NOT delete from old buckets.
+# This script creates the shared bucket if needed, copies state files,
+# and does NOT delete from old buckets.
 
 ACCOUNT_ID="559098897826"
 NEW_BUCKET="tfstate-${ACCOUNT_ID}"
+REGION="us-east-1"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BOLD='\033[1m'
 RESET='\033[0m'
+
+# --- Ensure shared state bucket exists ---
+
+if ! aws s3api head-bucket --bucket "${NEW_BUCKET}" 2>/dev/null; then
+  echo -e "${BOLD}Creating state bucket: ${NEW_BUCKET}${RESET}"
+  aws s3api create-bucket --bucket "${NEW_BUCKET}" --region "${REGION}"
+
+  aws s3api put-bucket-versioning --bucket "${NEW_BUCKET}" \
+    --versioning-configuration Status=Enabled
+
+  aws s3api put-bucket-encryption --bucket "${NEW_BUCKET}" \
+    --server-side-encryption-configuration '{
+      "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+    }'
+
+  aws s3api put-public-access-block --bucket "${NEW_BUCKET}" \
+    --public-access-block-configuration \
+      BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+  aws s3api put-bucket-policy --bucket "${NEW_BUCKET}" \
+    --policy "{
+      \"Version\": \"2012-10-17\",
+      \"Statement\": [
+        {
+          \"Sid\": \"DenyBareStateKeys\",
+          \"Effect\": \"Deny\",
+          \"Principal\": \"*\",
+          \"Action\": \"s3:PutObject\",
+          \"Resource\": [
+            \"arn:aws:s3:::${NEW_BUCKET}/terraform.tfstate\",
+            \"arn:aws:s3:::${NEW_BUCKET}/.terraform.lock.hcl\"
+          ]
+        }
+      ]
+    }"
+
+  echo -e "${GREEN}Bucket created.${RESET}"
+else
+  echo -e "Bucket ${NEW_BUCKET} already exists."
+fi
+
+echo
+
+# --- Copy state files ---
 
 copy_state() {
   local old_bucket="$1"
@@ -33,16 +78,6 @@ copy_state() {
     echo -e "${RED}Source not found, skipping${RESET}"
   fi
 }
-
-echo -e "${BOLD}=== State Migration ===${RESET}"
-echo -e "Target bucket: ${NEW_BUCKET}"
-echo
-
-# Verify the new bucket exists
-if ! aws s3 ls "s3://${NEW_BUCKET}" > /dev/null 2>&1; then
-  echo -e "${RED}ERROR: ${NEW_BUCKET} does not exist. Apply platform-control first.${RESET}"
-  exit 1
-fi
 
 # Platform repos
 copy_state "tf-state-boilerplate-${ACCOUNT_ID}" "aws-boilerplate.tfstate"     "platform/control.tfstate"
