@@ -45,7 +45,8 @@ Use this to determine which steps apply to your project.
 | 4 | ALB backend (listener rule, cert, DNS) | Your project | If project has an HTTP API |
 | 5 | Database (platform.yml, migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
 | 6 | Cognito client | Your project | If project has a frontend with login |
-| 7 | CI dashboard reporting | Your project workflow | Always |
+| 7 | Lint and test setup | Your project | Always |
+| 8 | CI dashboard reporting | Your project workflow | Always |
 
 ---
 
@@ -437,7 +438,201 @@ Pass the client ID and pool ID to your frontend as build-time env vars or runtim
 
 ---
 
-## Step 7: CI Dashboard Reporting
+## Step 7: Lint and Test Setup
+
+### 7a. TypeScript / React projects
+
+Install the standard plugins:
+
+```bash
+npm install -D eslint @eslint/js typescript-eslint eslint-plugin-react \
+  eslint-plugin-react-hooks eslint-plugin-react-refresh eslint-plugin-react-perf \
+  eslint-plugin-jsx-a11y eslint-plugin-sonarjs eslint-config-prettier prettier
+```
+
+Copy the platform's shared custom rules into your project:
+
+```bash
+cp -r ~/src/platform/lint/eslint-rules/ ./eslint-rules/
+```
+
+Create `eslint.config.js` (flat config):
+
+```js
+import js from "@eslint/js";
+import globals from "globals";
+import react from "eslint-plugin-react";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
+import reactPerf from "eslint-plugin-react-perf";
+import jsxA11y from "eslint-plugin-jsx-a11y";
+import sonarjs from "eslint-plugin-sonarjs";
+import prettier from "eslint-config-prettier";
+import tseslint from "typescript-eslint";
+import maxJsxProps from "./eslint-rules/max-jsx-props.js";
+import noInlineStyles from "./eslint-rules/no-inline-styles.js";
+import noDirectStoreImport from "./eslint-rules/no-direct-store-import.js";
+import noDirectFetch from "./eslint-rules/no-direct-fetch.js";
+import noEscapeHatches from "./eslint-rules/no-escape-hatches.js";
+import noManualAsyncState from "./eslint-rules/no-manual-async-state.js";
+import noManualViewHeader from "./eslint-rules/no-manual-view-header.js";
+import noManualExpandState from "./eslint-rules/no-manual-expand-state.js";
+import noRawUndefinedUnion from "./eslint-rules/no-raw-undefined-union.js";
+import noNonVitestTesting from "./eslint-rules/no-non-vitest-testing.js";
+import noJsFileExtension from "./eslint-rules/no-js-file-extension.js";
+
+export default tseslint.config(
+  { ignores: ["node_modules/", "dist/"] },
+
+  // Complexity limits — these are not negotiable
+  {
+    ...js.configs.recommended,
+    rules: {
+      complexity: ["error", 10],
+      "max-lines": ["error", { max: 400, skipBlankLines: true, skipComments: true }],
+      "max-lines-per-function": ["error", { max: 75, skipBlankLines: true, skipComments: true }],
+      "max-depth": ["warn", 4],
+    },
+  },
+
+  // TypeScript
+  ...tseslint.configs.recommended,
+
+  // React + Browser + Custom rules
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    plugins: {
+      react,
+      "react-hooks": reactHooks,
+      "react-refresh": reactRefresh,
+      "react-perf": reactPerf,
+      "jsx-a11y": jsxA11y,
+      local: {
+        rules: {
+          "max-jsx-props": maxJsxProps,
+          "no-inline-styles": noInlineStyles,
+          "no-direct-store-import": noDirectStoreImport,
+          "no-direct-fetch": noDirectFetch,
+          "no-escape-hatches": noEscapeHatches,
+          "no-manual-async-state": noManualAsyncState,
+          "no-manual-view-header": noManualViewHeader,
+          "no-manual-expand-state": noManualExpandState,
+          "no-raw-undefined-union": noRawUndefinedUnion,
+          "no-non-vitest-testing": noNonVitestTesting,
+          "no-js-file-extension": noJsFileExtension,
+        },
+      },
+    },
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.es2025 },
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    settings: { react: { version: "detect" } },
+    rules: {
+      ...react.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.configs.recommended.rules,
+      "react/react-in-jsx-scope": "off",
+      "react/prop-types": "off",
+      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "no-unused-vars": "off",
+      "react-perf/jsx-no-new-object-as-prop": ["warn", { nativeAllowList: "all" }],
+      "react-perf/jsx-no-new-array-as-prop": ["warn", { nativeAllowList: "all" }],
+      "react-perf/jsx-no-new-function-as-prop": ["warn", { nativeAllowList: "all" }],
+      "local/max-jsx-props": ["warn", { max: 12 }],
+      "local/no-inline-styles": "error",
+      "local/no-direct-store-import": "warn",
+      "local/no-direct-fetch": "error",
+      "local/no-escape-hatches": "error",
+      "local/no-manual-async-state": "warn",
+      "local/no-manual-view-header": "warn",
+      "local/no-manual-expand-state": "warn",
+      "local/no-raw-undefined-union": "warn",
+      "local/no-non-vitest-testing": "error",
+      "local/no-js-file-extension": "error",
+    },
+  },
+
+  sonarjs.configs.recommended,
+  prettier,
+);
+```
+
+**Custom rules** (source: `~/src/platform/lint/eslint-rules/`):
+
+| Rule | Severity | Purpose |
+|------|----------|---------|
+| `max-jsx-props` | warn | Max 12 props per element. Forces Parameter Object pattern. |
+| `no-inline-styles` | error | No inline style objects. Use CSS modules or classes. |
+| `no-direct-fetch` | error | No raw `fetch()`. Use shared API wrapper with auth. |
+| `no-direct-store-import` | warn | Views must not import stores directly. |
+| `no-escape-hatches` | error | No `getInternal*` methods, no config fallback defaults, no deprecated stubs. |
+| `no-manual-async-state` | warn | No manual loading/error state. Use shared async hooks. |
+| `no-manual-view-header` | warn | No manual view header rendering. Use shared component. |
+| `no-manual-expand-state` | warn | No manual expand/collapse state. Use shared hook. |
+| `no-raw-undefined-union` | warn | No `\| undefined` or `?:` in property signatures. Use named `Optional<T>` aliases. Prevents LLM-added defensive optionality. |
+| `no-non-vitest-testing` | error | All tests must use vitest. |
+| `no-js-file-extension` | error | Use `.ts`/`.tsx`, not `.js`. |
+
+Add to `package.json` scripts:
+
+```json
+{
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  }
+}
+```
+
+### 7b. Rust projects
+
+Copy the platform lint config into your project root:
+
+```bash
+cp ~/src/platform/lint/clippy.toml ./clippy.toml
+cp ~/src/platform/lint/rustfmt.toml ./rustfmt.toml
+```
+
+The clippy config enforces:
+- `cognitive-complexity-threshold = 10` — matches the TypeScript `complexity` rule
+- `too-many-arguments-threshold = 6` — same spirit as `max-jsx-props`
+- `type-complexity-threshold = 200`
+
+Run clippy with strict warnings:
+
+```bash
+cargo clippy -- -D warnings -W clippy::pedantic \
+  -A clippy::module_name_repetitions -A clippy::must_use_candidate
+```
+
+Run rustfmt:
+
+```bash
+cargo fmt --check
+```
+
+Add to `scripts/deploy.sh` before build:
+
+```bash
+echo "Linting Rust..."
+(cd "${ROOT_DIR}" && cargo fmt --check && cargo clippy -- -D warnings)
+```
+
+### 7c. Terraform
+
+```bash
+terraform fmt -check -recursive infrastructure/terraform/
+```
+
+---
+
+## Step 8: CI Dashboard Reporting
 
 Add as the **last step** in your GitHub Actions workflow, **after** the OIDC credentials step:
 
@@ -456,24 +651,55 @@ Reads ingest URL and token from SSM. No secrets to configure.
 ## GitHub Actions Workflow Template
 
 ```yaml
-name: Deploy
+name: CI/CD
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: <name>-deploy
-  cancel-in-progress: false
+  group: <name>-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  deploy:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+        working-directory: frontend  # adjust path
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm run typecheck
+        working-directory: frontend
+      - run: terraform fmt -check -recursive
+        working-directory: infrastructure/terraform
+
+  # Add for Rust projects:
+  # lint-rust:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: cargo fmt --check
+  #     - run: cargo clippy -- -D warnings
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: [lint]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: <name>-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v4
@@ -488,6 +714,8 @@ jobs:
         run: bash scripts/deploy.sh
       - uses: chris-arsenault/platform/.github/actions/report-build@main
         if: always()
+        with:
+          lint-passed: ${{ needs.lint.result == 'success' }}
 ```
 
 ---
