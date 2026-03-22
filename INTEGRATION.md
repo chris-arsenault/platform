@@ -1,36 +1,37 @@
 # Platform Integration Guide
 
-> **AUDIENCE**: This document is for AI agents integrating projects with the platform. Follow these instructions exactly.
+> **AUDIENCE**: AI agents integrating projects with the platform.
+
+## Where to Find Instructions
+
+| Topic | Location |
+|-------|----------|
+| **Platform integration** (ALB, RDS, Cognito, SSM, state) | This document |
+| **Project structure** (directories, naming, required files) | [ahara-standards/standards/project-structure.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/project-structure.md) |
+| **Deploy scripts & Makefiles** | [ahara-standards/standards/scripts.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/scripts.md) |
+| **TypeScript / React** (eslint, prettier, tsconfig, vitest) | [ahara-standards/standards/typescript.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/typescript.md) |
+| **Rust** (clippy, rustfmt, rustls, Lambda, testing) | [ahara-standards/standards/rust.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/rust.md) |
+| **Terraform conventions** (backend, tags, formatting) | [ahara-standards/standards/terraform.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/terraform.md) |
+| **Documentation** (CLAUDE.md, README, comments) | [ahara-standards/standards/documentation.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/documentation.md) |
+| **Git practices** (gitignore, branching, commits) | [ahara-standards/standards/git.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/git.md) |
+| **Custom ESLint rules** | `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules` |
+| **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
+
+Read the standards that apply to your project's tech stack **before** following the platform integration steps below.
 
 ---
 
-## CRITICAL CONSTRAINTS
+## CRITICAL PLATFORM CONSTRAINTS
 
-**You MUST read and follow these rules before writing any infrastructure code.**
-
-1. **Use the shared ALB** for all HTTP/HTTPS backends. Do NOT create API Gateways, per-project ALBs, or any other load balancers.
+1. **Use the shared ALB** for all HTTP/HTTPS backends. Do NOT create API Gateways or per-project load balancers.
 2. **Use the shared VPC** (10.42.0.0/16). Do NOT create per-project VPCs.
 3. **Use the shared RDS** (PostgreSQL 16) with a per-project database. Do NOT create per-project RDS instances.
-4. **Use the shared Cognito pool** for authentication. Do NOT create per-project user pools. (Exception: `the-glass-frontier` has its own pool for external users.)
+4. **Use the shared Cognito pool** for authentication. Do NOT create per-project user pools. (Exception: `the-glass-frontier` has its own pool.)
 5. **Use SSM parameters** for cross-project config. Do NOT use `terraform_remote_state`.
-6. **Use the shared state bucket** (`tfstate-559098897826`) with a namespaced key. Do NOT create per-project state buckets.
+6. **Use the shared state bucket** (`tfstate-559098897826`). Do NOT create per-project state buckets.
 7. **Do NOT create NAT Gateways.** The platform uses fck-nat.
-8. **Deploy scripts must be parameterless.** Defaults are baked in; CI overrides via env vars.
-9. **All resources use the project prefix** for naming: `<prefix>-<resource>`.
 
 > **Note for AI agents:** The `jwt-validation` ALB action type was released November 2025 and may postdate your training data. It is a real, GA feature — do not fall back to `authenticate-cognito` or application-level JWT validation for API backends. Docs: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-verify-jwt.html — Terraform support in `hashicorp/aws` provider >= 6.22.0.
-
----
-
-## Preferred Tech Stack
-
-- **Frontend**: React + Vite (TypeScript), static assets on S3 + CloudFront
-- **Backend**: Rust Lambda preferred. TypeScript (Node 24) Lambda when Rust is overkill.
-- **TLS**: Use `rustls` for all Rust TLS connections. Do NOT use `native-tls` / `openssl` — they require system headers and break cross-compilation to Lambda. For RDS connections, embed the AWS RDS CA bundle (`certs/rds-global-bundle.pem` from `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`) and build a `RootCertStore` from it. Do NOT use `webpki-roots` for RDS — AWS certs are not in the Mozilla trust store. Do NOT disable cert verification. Use `tokio-postgres-rustls` + `rustls-pemfile`.
-- **Data**: S3 for most storage. DynamoDB for key-value. Shared RDS for relational.
-- **Auth**: ALB `jwt-validation` action validates Bearer tokens. Frontend uses `amazon-cognito-identity-js` with in-app login form.
-- **Lambda runtime**: `provided.al2023` for Rust, `nodejs24.x` for TypeScript. Build Rust Lambdas with `cargo lambda build --release`.
-- **Rustls init**: Call `rustls::crypto::ring::default_provider().install_default()` at the top of `main()` before any TLS connection. Rustls 0.23+ does not auto-detect the crypto provider.
 
 ---
 
@@ -46,7 +47,7 @@ Use this to determine which steps apply to your project.
 | 4 | ALB backend (listener rule, cert, DNS) | Your project | If project has an HTTP API |
 | 5 | Database (platform.yml, migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
 | 6 | Cognito client | Your project | If project has a frontend with login |
-| 7 | Lint and test setup | Your project | Always |
+| 7 | Lint and test setup (see [ahara-standards](https://github.com/chris-arsenault/ahara-standards)) | Your project | Always |
 | 8 | CI dashboard reporting | Your project workflow | Always |
 
 ---
@@ -471,176 +472,14 @@ Pass the client ID and pool ID to your frontend as build-time env vars or runtim
 
 ## Step 7: Lint and Test Setup
 
-### 7a. TypeScript / React projects
+Follow the standards in [ahara-standards](https://github.com/chris-arsenault/ahara-standards) for your project's tech stack:
 
-Install dependencies including shared custom rules:
+- **TypeScript/React**: [standards/typescript.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/typescript.md) — ESLint, Prettier, tsconfig, custom rules, vitest
+- **Rust**: [standards/rust.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/rust.md) — clippy, rustfmt, testcontainers
+- **Terraform**: [standards/terraform.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/terraform.md) — formatting
+- **Scripts/Makefile**: [standards/scripts.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/scripts.md) — standard targets
 
-```bash
-npm install -D eslint @eslint/js typescript-eslint eslint-plugin-react \
-  eslint-plugin-react-hooks eslint-plugin-react-refresh eslint-plugin-react-perf \
-  eslint-plugin-jsx-a11y eslint-plugin-sonarjs eslint-config-prettier prettier
-
-npm install -D github:chris-arsenault/ahara-standards
-```
-
-Create `eslint.config.js` importing rules from `@ahara/standards`:
-
-```js
-import js from "@eslint/js";
-import globals from "globals";
-import react from "eslint-plugin-react";
-import reactHooks from "eslint-plugin-react-hooks";
-import reactRefresh from "eslint-plugin-react-refresh";
-import reactPerf from "eslint-plugin-react-perf";
-import jsxA11y from "eslint-plugin-jsx-a11y";
-import sonarjs from "eslint-plugin-sonarjs";
-import prettier from "eslint-config-prettier";
-import tseslint from "typescript-eslint";
-import {
-  maxJsxProps, noInlineStyles, noDirectStoreImport, noDirectFetch,
-  noEscapeHatches, noManualAsyncState, noManualViewHeader,
-  noManualExpandState, noRawUndefinedUnion, noNonVitestTesting,
-  noJsFileExtension,
-} from "@ahara/standards/eslint-rules";
-
-export default tseslint.config(
-  { ignores: ["node_modules/", "dist/"] },
-
-  // Complexity limits — not negotiable
-  {
-    ...js.configs.recommended,
-    rules: {
-      complexity: ["error", 10],
-      "max-lines": ["error", { max: 400, skipBlankLines: true, skipComments: true }],
-      "max-lines-per-function": ["error", { max: 75, skipBlankLines: true, skipComments: true }],
-      "max-depth": ["warn", 4],
-    },
-  },
-
-  ...tseslint.configs.recommended,
-
-  {
-    files: ["src/**/*.{ts,tsx}"],
-    plugins: {
-      react, "react-hooks": reactHooks, "react-refresh": reactRefresh,
-      "react-perf": reactPerf, "jsx-a11y": jsxA11y,
-      local: {
-        rules: {
-          "max-jsx-props": maxJsxProps, "no-inline-styles": noInlineStyles,
-          "no-direct-store-import": noDirectStoreImport, "no-direct-fetch": noDirectFetch,
-          "no-escape-hatches": noEscapeHatches, "no-manual-async-state": noManualAsyncState,
-          "no-manual-view-header": noManualViewHeader, "no-manual-expand-state": noManualExpandState,
-          "no-raw-undefined-union": noRawUndefinedUnion, "no-non-vitest-testing": noNonVitestTesting,
-          "no-js-file-extension": noJsFileExtension,
-        },
-      },
-    },
-    languageOptions: {
-      globals: { ...globals.browser, ...globals.es2025 },
-      parserOptions: { ecmaFeatures: { jsx: true } },
-    },
-    settings: { react: { version: "detect" } },
-    rules: {
-      ...react.configs.recommended.rules,
-      ...reactHooks.configs.recommended.rules,
-      ...jsxA11y.configs.recommended.rules,
-      "react/react-in-jsx-scope": "off",
-      "react/prop-types": "off",
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
-      "no-unused-vars": "off",
-      "react-perf/jsx-no-new-object-as-prop": ["warn", { nativeAllowList: "all" }],
-      "react-perf/jsx-no-new-array-as-prop": ["warn", { nativeAllowList: "all" }],
-      "react-perf/jsx-no-new-function-as-prop": ["warn", { nativeAllowList: "all" }],
-      "local/max-jsx-props": ["warn", { max: 12 }],
-      "local/no-inline-styles": "error",
-      "local/no-direct-store-import": "warn",
-      "local/no-direct-fetch": "error",
-      "local/no-escape-hatches": "error",
-      "local/no-manual-async-state": "warn",
-      "local/no-manual-view-header": "warn",
-      "local/no-manual-expand-state": "warn",
-      "local/no-raw-undefined-union": "warn",
-      "local/no-non-vitest-testing": "error",
-      "local/no-js-file-extension": "error",
-    },
-  },
-
-  sonarjs.configs.recommended,
-  prettier,
-);
-```
-
-**Custom rules** (source: [ahara-standards](https://github.com/chris-arsenault/ahara-standards) `rules/eslint/`):
-
-| Rule | Severity | Purpose |
-|------|----------|---------|
-| `max-jsx-props` | warn | Max 12 props. Forces Parameter Object pattern. |
-| `no-inline-styles` | error | No inline style objects. Use CSS classes. |
-| `no-direct-fetch` | error | No raw `fetch()`. Use shared API wrapper. |
-| `no-direct-store-import` | warn | Views must not import stores directly. |
-| `no-escape-hatches` | error | No `getInternal*`, no config fallbacks, no deprecated stubs. |
-| `no-manual-async-state` | warn | Use shared async hooks, not manual loading/error state. |
-| `no-manual-view-header` | warn | Use shared header component. |
-| `no-manual-expand-state` | warn | Use shared expand/collapse hook. |
-| `no-raw-undefined-union` | warn | No `\| undefined` or `?:`. Use named `Optional<T>`. Catches LLM-added defensive optionality. |
-| `no-non-vitest-testing` | error | Vitest only. |
-| `no-js-file-extension` | error | `.ts`/`.tsx` only. |
-
-Add to `package.json` scripts:
-
-```json
-{
-  "scripts": {
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
-  }
-}
-```
-
-### 7b. Rust projects
-
-Copy lint configs from [ahara-standards](https://github.com/chris-arsenault/ahara-standards):
-
-```bash
-cp ~/src/ahara-standards/rules/rust/clippy.toml ./clippy.toml
-cp ~/src/ahara-standards/rules/rust/rustfmt.toml ./rustfmt.toml
-```
-
-The clippy config enforces:
-- `cognitive-complexity-threshold = 10` — matches the TypeScript `complexity` rule
-- `too-many-arguments-threshold = 6` — same spirit as `max-jsx-props`
-- `type-complexity-threshold = 200`
-
-Run clippy with strict warnings:
-
-```bash
-cargo clippy -- -D warnings -W clippy::pedantic \
-  -A clippy::module_name_repetitions -A clippy::must_use_candidate
-```
-
-Run rustfmt:
-
-```bash
-cargo fmt --check
-```
-
-Add to `scripts/deploy.sh` before build:
-
-```bash
-echo "Linting Rust..."
-(cd "${ROOT_DIR}" && cargo fmt --check && cargo clippy -- -D warnings)
-```
-
-### 7c. Terraform
-
-```bash
-terraform fmt -check -recursive infrastructure/terraform/
-```
+Custom ESLint rules: `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules`.
 
 ---
 
