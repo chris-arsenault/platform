@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Restores a SQL dump into the project's database via the platform Lambda.
+# Uploads dump to S3, executes via Lambda (VPC access), and baselines all
+# existing migration files as noops in the tracking table.
+# Usage: db-restore <path-to-sql-file> <comment>
+set -euo pipefail
+
+SQL_FILE="${1:?Usage: db-restore <path-to-sql-file> <comment>}"
+COMMENT="${2:?Usage: db-restore <path-to-sql-file> <comment> — comment is required}"
+
+if [ ! -f "${SQL_FILE}" ]; then
+  echo "ERROR: File not found: ${SQL_FILE}"
+  exit 1
+fi
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+
+BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
+  --query Parameter.Value --output text --region "${REGION}")
+FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+  --query Parameter.Value --output text --region "${REGION}")
+
+S3_KEY="restores/${PROJECT}/$(date +%Y%m%d-%H%M%S)-$(basename "${SQL_FILE}")"
+
+echo "Uploading dump to s3://${BUCKET}/${S3_KEY}..."
+aws s3 cp "${SQL_FILE}" "s3://${BUCKET}/${S3_KEY}" --quiet
+
+# Upload migration files so the Lambda can baseline them
+MIGRATIONS_DIR=$(platform-manifest migrations)
+if [ -d "${MIGRATIONS_DIR}" ]; then
+  echo "Uploading migration files for baselining..."
+  aws s3 sync "${MIGRATIONS_DIR}/" "s3://${BUCKET}/migrations/${PROJECT}/" --delete --quiet
+fi
+
+echo "Restoring ${PROJECT} via Lambda..."
+PAYLOAD=$(python3 -c "
+import json
+print(json.dumps({
+    'operation': 'restore',
+    'project': '${PROJECT}',
+    'target': '${S3_KEY}',
+    'comment': '${COMMENT}'
+}))
+")
+
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "${PAYLOAD}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "Restore FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
