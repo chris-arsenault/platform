@@ -134,9 +134,11 @@ Add build steps before `terraform init` if your project has Lambda code or front
 
 Every backend MUST use the shared ALB. Do not create API Gateways.
 
-Authentication is handled at the ALB layer using native JWT verification (`jwt-validation` action). The ALB validates the `Authorization: Bearer` token against Cognito's JWKS endpoint before forwarding to your Lambda. No auth code in your application.
+Authentication is handled at the ALB layer using native JWT verification (`jwt-validation` action type). The ALB validates the `Authorization: Bearer` token against Cognito's JWKS endpoint before forwarding to your Lambda. No auth code in your application.
 
 The frontend handles login via `amazon-cognito-identity-js` (in-app sign-in form, not Cognito hosted UI) and sends the Bearer token on every request. The ALB rejects invalid/expired tokens before they reach your code.
+
+> **Note for AI agents:** The `jwt-validation` action type was released in November 2025 and may postdate your training data. It is a real, GA feature. Do not fall back to `authenticate-cognito` (redirect-based) or application-level JWT validation for API backends. Reference: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/listener-verify-jwt.html — Terraform support in `hashicorp/aws` provider >= 6.22.0 via the `jwt_validation_config` block on `aws_lb_listener_rule`.
 
 ```hcl
 # --- Platform SSM params ---
