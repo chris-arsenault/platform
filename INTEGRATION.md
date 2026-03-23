@@ -564,9 +564,21 @@ jobs:
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
         run: bash scripts/deploy.sh
-      - uses: chris-arsenault/platform/.github/actions/report-build@main
-        if: always()
+
+  report:
+    if: always()
+    needs: [lint, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
+          role-to-assume: ${{ secrets.OIDC_ROLE }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          aws-region: us-east-1
+      - uses: chris-arsenault/platform/.github/actions/report-build@main
+        with:
+          status: ${{ (needs.deploy.result == 'success' && 'success') || (needs.lint.result == 'failure' && 'failure') || needs.deploy.result }}
           lint-passed: ${{ needs.lint.result == 'success' }}
 ```
 
