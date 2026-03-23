@@ -515,6 +515,8 @@ Reads ingest URL and token from SSM. No secrets to configure.
 
 ## GitHub Actions Workflow Template
 
+Adapt this template to your project. Remove sections that don't apply (e.g., Rust steps for a TypeScript-only project, migrations for a project without a database).
+
 ```yaml
 name: CI/CD
 
@@ -538,25 +540,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+
+      # --- Node/pnpm (for TypeScript frontends) ---
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - run: npm ci
-        working-directory: frontend  # adjust path
-      - run: npm run lint
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@10.29.3 --activate
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store/v10
+          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+      - name: Install frontend deps
         working-directory: frontend
-      - run: npm run typecheck
+        run: pnpm install --frozen-lockfile
+      - name: Lint frontend
         working-directory: frontend
-      - run: terraform fmt -check -recursive
-        working-directory: infrastructure/terraform
+        run: pnpm exec eslint .
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit
 
-  # Add for Rust projects:
-  # lint-rust:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - run: cargo fmt --check
-  #     - run: cargo clippy -- -D warnings
+      # --- Rust (for Rust backends) ---
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: rust-lint-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-lint-
+      - name: Clippy
+        working-directory: backend
+        run: cargo clippy -- -D warnings
+      - name: Rustfmt
+        working-directory: backend
+        run: cargo fmt -- --check
+
+      # --- Terraform ---
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive infrastructure/terraform/
 
   deploy:
     if: github.ref == 'refs/heads/main'
@@ -568,16 +595,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # --- pnpm (if frontend) ---
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@10.29.3 --activate
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store/v10
+          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      # --- Rust + cargo-lambda (if Rust backend) ---
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: rust-deploy-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-deploy-
+      - name: Install cargo-lambda
+        run: pip3 install cargo-lambda
+
+      # --- AWS credentials ---
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ secrets.OIDC_ROLE }}
           role-session-name: GitHubActions-${{ github.run_id }}
           aws-region: us-east-1
-      # Run migrations before deploy (only if project uses database)
+
+      # --- Migrations (if project uses database) ---
       - uses: chris-arsenault/platform/.github/actions/run-migrations@main
         with:
           project: <name>
           migrations-dir: db/migrations
+
+      # --- Deploy ---
       - name: Deploy
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
@@ -599,6 +657,12 @@ jobs:
           status: ${{ (needs.deploy.result == 'success' && 'success') || (needs.lint.result == 'failure' && 'failure') || needs.deploy.result }}
           lint-passed: ${{ needs.lint.result == 'success' }}
 ```
+
+**Caching notes:**
+- Use separate cache keys for lint vs deploy (`rust-lint-` vs `rust-deploy-`) since they may build different profiles
+- pnpm store caches on lockfile hash — invalidates on dependency changes
+- Cargo caches registry + git + target — invalidates on `Cargo.lock` changes
+- cargo-lambda can be installed via `pip3 install cargo-lambda` (fastest) or `cargo-binstall` (larger cache)
 
 ---
 
