@@ -16,6 +16,8 @@
 | **Testing** (what to test, testcontainers, mocks, organization) | [ahara-standards/standards/testing.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/testing.md) |
 | **Git practices** (gitignore, branching, commits) | [ahara-standards/standards/git.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/git.md) |
 | **Custom ESLint rules** | `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules` |
+| **Shared GitHub Actions** | `run-migrations` and `report-build` in `platform/.github/actions/` — use in CI workflows |
+| **Platform CLI tools** | `~/src/platform/bin/` — `db-migrate`, `db-seed`, `db-rollback`, `db-drop`, `db-noop`, `db-restore` |
 | **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
 
 Read the standards that apply to your project's tech stack **before** following the platform integration steps below.
@@ -387,12 +389,23 @@ db-seed                 # run seed SQL files
 db-drop                 # drop the project database (requires confirmation)
 ```
 
-Add `db-migrate` to your deploy script:
+**Local deploys** — add `db-migrate` to your deploy script (requires `platform/bin` on PATH via `platform-setup`):
 
 ```bash
 # In scripts/deploy.sh, after build steps and before terraform apply:
 db-migrate
 ```
+
+**CI deploys** — use the shared `run-migrations` action (after OIDC credentials are configured):
+
+```yaml
+- uses: chris-arsenault/platform/.github/actions/run-migrations@main
+  with:
+    project: <name>
+    migrations-dir: db/migrations  # default, can be omitted
+```
+
+Both paths execute the same logic: upload SQL files to S3, invoke the migration Lambda synchronously, fail on error.
 
 Behavior:
 - Uploads migration SQL files to S3, invokes the migration Lambda synchronously
@@ -560,6 +573,11 @@ jobs:
           role-to-assume: ${{ secrets.OIDC_ROLE }}
           role-session-name: GitHubActions-${{ github.run_id }}
           aws-region: us-east-1
+      # Run migrations before deploy (only if project uses database)
+      - uses: chris-arsenault/platform/.github/actions/run-migrations@main
+        with:
+          project: <name>
+          migrations-dir: db/migrations
       - name: Deploy
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
