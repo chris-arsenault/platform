@@ -100,6 +100,7 @@ module "<name>_project" {
 |--------|----------------|
 | `state` | **Always** — access to the shared state bucket |
 | `api` | Project has Lambda functions |
+| `db` | Project uses the shared RDS database and migrations |
 | `cognito-client` | Project creates its own Cognito client (most apps) |
 | `bedrock` | Project uses Bedrock model invocation |
 | `iam` | Project creates IAM roles scoped to its prefix |
