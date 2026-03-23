@@ -13,6 +13,7 @@
 | **Rust** (clippy, rustfmt, rustls, Lambda, testing) | [ahara-standards/standards/rust.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/rust.md) |
 | **Terraform conventions** (backend, tags, formatting) | [ahara-standards/standards/terraform.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/terraform.md) |
 | **Documentation** (CLAUDE.md, README, comments) | [ahara-standards/standards/documentation.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/documentation.md) |
+| **Testing** (what to test, testcontainers, mocks, organization) | [ahara-standards/standards/testing.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/testing.md) |
 | **Git practices** (gitignore, branching, commits) | [ahara-standards/standards/git.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/git.md) |
 | **Custom ESLint rules** | `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules` |
 | **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
