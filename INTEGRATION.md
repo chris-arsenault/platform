@@ -52,6 +52,9 @@ Use this to determine which steps apply to your project.
 | 6 | Cognito client | Your project | If project has a frontend with login |
 | 7 | Lint and test setup (see [ahara-standards](https://github.com/chris-arsenault/ahara-standards)) | Your project | Always |
 | 8 | CI dashboard reporting | Your project workflow | Always |
+| 9 | Required project files (README, LICENSE, CLAUDE.md) | Your project | Always |
+
+> **IMPORTANT for AI agents:** Steps 1 and 5 require changes to **other repos** (`platform-control` and `platform-services`). These are not documentation tasks — they are blocking prerequisites. You MUST make the actual file changes in those repos, not defer them to a docs/ folder or TODO list. The project cannot deploy without them. Treat cross-repo changes the same as in-project changes: make the edit, verify it, and tell the user it's done.
 
 ---
 
@@ -664,6 +667,47 @@ jobs:
 - pnpm store caches on lockfile hash — invalidates on dependency changes
 - Cargo caches registry + git + target — invalidates on `Cargo.lock` changes
 - cargo-lambda can be installed via `pip3 install cargo-lambda` (fastest) or `cargo-binstall` (larger cache)
+
+---
+
+## Step 9: Required Project Files
+
+Every project must include these files in its root. This is not optional.
+
+### README.md
+
+Must include at minimum:
+- Project name and one-line description
+- Architecture summary (frontend, backend, database, auth)
+- URLs (app and API)
+- Local development instructions
+- Deploy command
+- License reference
+
+### LICENSE
+
+Use MIT unless there is a specific reason not to. Match the format in `~/src/platform/LICENSE`.
+
+### CLAUDE.md
+
+Must include at minimum:
+- Project name and purpose
+- Architecture overview (what runs where)
+- Backend structure (crates/packages, Lambda split, shared code)
+- Frontend structure (if applicable)
+- Build and deploy commands
+- Database details (engine, migration location, query approach)
+- Key architectural decisions and their rationale
+
+### platform.yml
+
+Required if the project uses the shared database. See Step 5b.
+
+### .gitignore
+
+Must exclude at minimum: build artifacts, dependency directories, Terraform state/lock files, IDE files, environment files.
+
+> **For AI agents:** Generate all of these files as part of the initial project scaffold — not as a follow-up task. If you create a project without a README, LICENSE, or CLAUDE.md, the project is incomplete.
 
 ---
 
