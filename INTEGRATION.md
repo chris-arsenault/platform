@@ -271,6 +271,8 @@ Use 200+ for consumer projects. Do not reuse a priority.
 
 Omit the `jwt-validation` action only if the endpoint is intentionally public.
 
+**CORS:** OPTIONS preflight requests are handled platform-wide by a Lambda at ALB priority 1. Do NOT create per-project OPTIONS listener rules. Your Lambda still needs `tower-http CorsLayer` (or equivalent) to add CORS headers on actual (non-preflight) responses.
+
 ### 4d. TLS certificate
 
 ```hcl
