@@ -151,6 +151,14 @@ provider "aws" {
 
 ## Step 3: Deploy Script
 
+`scripts/deploy.sh` is a **local-only** convenience script. It runs the full deploy pipeline on the developer's machine: build, migrate, terraform apply. CI does **not** call this script — it replicates the same steps explicitly in the workflow.
+
+This separation exists because:
+- CI and local have different auth (OIDC role vs local credentials)
+- CI uses the `run-migrations` action; local uses `db-migrate` CLI
+- CI needs `if:` guards to skip deploy on PRs; the script always deploys
+- Debugging CI failures is easier when steps are visible in the workflow
+
 Create `scripts/deploy.sh`:
 
 ```bash
@@ -163,6 +171,13 @@ TF_DIR="${ROOT_DIR}/infrastructure/terraform"
 STATE_BUCKET="${STATE_BUCKET:-tfstate-559098897826}"
 STATE_REGION="${STATE_REGION:-us-east-1}"
 
+# Build steps — add project-specific builds here
+# e.g. cargo lambda build --release, pnpm run build
+
+# Run migrations
+db-migrate
+
+# Deploy infrastructure
 terraform -chdir="${TF_DIR}" init -reconfigure \
   -backend-config="bucket=${STATE_BUCKET}" \
   -backend-config="region=${STATE_REGION}" \
@@ -171,7 +186,7 @@ terraform -chdir="${TF_DIR}" init -reconfigure \
 terraform -chdir="${TF_DIR}" apply -auto-approve
 ```
 
-Add build steps (npm, cargo, etc.) before `terraform init` if needed.
+The CI workflow must replicate these same steps explicitly — see the workflow template below. **Do not call `scripts/deploy.sh` from CI.**
 
 ---
 
@@ -599,6 +614,9 @@ jobs:
         run: terraform fmt -check -recursive infrastructure/terraform/
 
       # --- Deploy (main only) ---
+      # These steps replicate what scripts/deploy.sh does locally.
+      # Do NOT call deploy.sh from CI — keep steps explicit.
+
       - name: Install cargo-lambda
         if: github.ref == 'refs/heads/main'
         run: pip3 install cargo-lambda
@@ -610,6 +628,18 @@ jobs:
           role-session-name: GitHubActions-${{ github.run_id }}
           aws-region: us-east-1
 
+      # --- Build (if Rust backend) ---
+      - name: Build Lambdas
+        if: github.ref == 'refs/heads/main'
+        working-directory: backend
+        run: cargo lambda build --release
+
+      # --- Build (if frontend) ---
+      - name: Build frontend
+        if: github.ref == 'refs/heads/main'
+        working-directory: frontend
+        run: pnpm run build
+
       # --- Migrations (if project uses database) ---
       - uses: chris-arsenault/platform/.github/actions/run-migrations@main
         if: github.ref == 'refs/heads/main'
@@ -617,11 +647,17 @@ jobs:
           project: <name>
           migrations-dir: db/migrations
 
-      - name: Deploy
+      # --- Terraform ---
+      - name: Terraform deploy
         if: github.ref == 'refs/heads/main'
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
-        run: bash scripts/deploy.sh
+        run: |
+          terraform -chdir=infrastructure/terraform init -reconfigure \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="region=us-east-1" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=infrastructure/terraform apply -auto-approve
 
   report:
     if: always()
