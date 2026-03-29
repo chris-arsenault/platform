@@ -19,6 +19,7 @@
 | **Shared GitHub Actions** | `run-migrations` and `report-build` in `platform/.github/actions/` — use in CI workflows |
 | **Platform CLI tools** | `~/src/platform/bin/` — `db-migrate`, `db-seed`, `db-rollback`, `db-drop`, `db-noop`, `db-restore` |
 | **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
+| **Dynamic OpenGraph** (per-route OG tags for SPAs) | [OPENGRAPH.md](OPENGRAPH.md) |
 
 Read the standards that apply to your project's tech stack **before** following the platform integration steps below.
 
