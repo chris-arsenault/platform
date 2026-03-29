@@ -1,0 +1,95 @@
+name: Deploy to TrueNAS
+description: Deploy a Docker stack to TrueNAS via the Komodo proxy Lambda. Requires AWS credentials (OIDC role).
+
+inputs:
+  stack-name:
+    description: Komodo stack name
+    required: true
+  compose-file:
+    description: Path to docker-compose.yaml relative to repo root
+    required: true
+    default: docker/compose.yaml
+  image:
+    description: Full GHCR image reference (e.g. ghcr.io/chris-arsenault/sonarqube:abc123)
+    required: false
+    default: ""
+  secrets:
+    description: |
+      Newline-separated KEY=ssm-path pairs. Values are resolved by the Lambda, never exposed to GHA.
+      Example:
+        DB_PASSWORD=/platform/rds/master-password
+        COGNITO_CLIENT_ID=/platform/cognito/client-id
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - run: |
+        REGION="us-east-1"
+        FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+          --query Parameter.Value --output text --region "${REGION}")
+
+        COMPOSE_CONTENT=$(cat "${{ inputs.compose-file }}")
+
+        # Build secrets JSON from KEY=ssm-path pairs
+        SECRETS_JSON="{}"
+        if [ -n "${{ inputs.secrets }}" ]; then
+          SECRETS_JSON=$(echo '${{ inputs.secrets }}' | python3 -c "
+        import sys, json
+        d = {}
+        for line in sys.stdin:
+            line = line.strip()
+            if '=' in line:
+                k, v = line.split('=', 1)
+                d[k] = 'ssm:' + v
+        print(json.dumps(d))
+        ")
+        fi
+
+        # Build the Lambda payload
+        PAYLOAD=$(python3 -c "
+        import json
+        actions = []
+
+        # Set secrets as Komodo variables
+        secrets = json.loads('$SECRETS_JSON')
+        if secrets:
+            actions.append({
+                'type': 'SetVariables',
+                'variables': secrets,
+                'secret': True,
+            })
+
+        # TODO: Create/update stack via Komodo API once API paths are confirmed
+        # For now, trigger deploy on existing stack
+        actions.append({
+            'type': 'Api',
+            'method': 'POST',
+            'path': '/execute/DeployStack',
+            'body': {'stack': '${{ inputs.stack-name }}'},
+        })
+
+        print(json.dumps({'actions': actions}))
+        ")
+
+        echo "Deploying ${{ inputs.stack-name }} to TrueNAS..."
+        RESULT_FILE=$(mktemp)
+        aws lambda invoke \
+          --function-name "${FN}" \
+          --payload "${PAYLOAD}" \
+          --cli-binary-format raw-in-base64-out \
+          --region "${REGION}" \
+          "${RESULT_FILE}" > /dev/null
+
+        RESULT=$(cat "${RESULT_FILE}")
+        rm "${RESULT_FILE}"
+
+        if echo "${RESULT}" | grep -q '"errorMessage"'; then
+          echo "::error::Deploy to TrueNAS failed"
+          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+          exit 1
+        fi
+
+        echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+      shell: bash

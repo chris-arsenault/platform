@@ -1,0 +1,25 @@
+name: Secret Scan
+description: Scan a Docker image for leaked secrets before pushing to a registry.
+
+inputs:
+  image:
+    description: Docker image to scan (must be built locally)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install trufflehog
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+      shell: bash
+
+    - name: Scan image for secrets
+      run: |
+        echo "Scanning ${{ inputs.image }} for secrets..."
+        trufflehog docker --image=${{ inputs.image }} --only-verified --fail 2>&1 || {
+          echo "::error::Secrets detected in Docker image ${{ inputs.image }}. Do NOT push this image."
+          exit 1
+        }
+        echo "No secrets found."
+      shell: bash

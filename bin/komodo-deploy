@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Deploy a stack to TrueNAS via the Komodo proxy Lambda.
+# Reads stack-name from platform.yml. Optionally pass secrets as arguments.
+#
+# Usage:
+#   komodo-deploy                          # deploy with no secrets
+#   komodo-deploy DB_HOST=/platform/rds/address DB_PASS=/platform/rds/master-password
+set -euo pipefail
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+
+FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+  --query Parameter.Value --output text --region "${REGION}")
+
+# Build secrets from arguments
+SECRETS_JSON="{}"
+if [ $# -gt 0 ]; then
+  SECRETS_JSON=$(python3 -c "
+import sys, json
+d = {}
+for arg in sys.argv[1:]:
+    if '=' in arg:
+        k, v = arg.split('=', 1)
+        d[k] = 'ssm:' + v
+print(json.dumps(d))
+" "$@")
+fi
+
+# Build payload
+PAYLOAD=$(python3 -c "
+import json
+actions = []
+secrets = json.loads('${SECRETS_JSON}')
+if secrets:
+    actions.append({
+        'type': 'SetVariables',
+        'variables': secrets,
+        'secret': True,
+    })
+actions.append({
+    'type': 'Api',
+    'method': 'POST',
+    'path': '/execute/DeployStack',
+    'body': {'stack': '${PROJECT}'},
+})
+print(json.dumps({'actions': actions}))
+")
+
+echo "Deploying ${PROJECT} to TrueNAS..."
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "${PAYLOAD}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "Deploy FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
