@@ -524,6 +524,10 @@ Reads ingest URL and token from SSM. No secrets to configure.
 
 Adapt this template to your project. Remove sections that don't apply (e.g., Rust steps for a TypeScript-only project, migrations for a project without a database).
 
+The workflow uses a **single `ci` job** that runs lint on all branches and conditionally deploys on main. This avoids duplicate runner setup, duplicate cache restores, and the overhead of separate jobs. Deploy steps are gated with `if: github.ref == 'refs/heads/main'`.
+
+The concurrency group switches per context: PRs cancel in-progress runs on the same branch, while main deploys queue without cancellation to avoid interrupted deployments.
+
 ```yaml
 name: CI/CD
 
@@ -534,17 +538,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: <name>-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  lint:
+  ci:
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.ref == 'refs/heads/main' && '<name>-deploy' || format('<name>-{0}', github.ref) }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v4
@@ -572,6 +575,9 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       # --- Rust (for Rust backends) ---
+      - name: Rust version key
+        id: rust
+        run: echo "cachekey=$(rustc --version | sha256sum | head -c12)" >> "$GITHUB_OUTPUT"
       - name: Cache Rust
         uses: actions/cache@v4
         with:
@@ -579,8 +585,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
-          key: rust-lint-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-lint-
+          key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
       - name: Clippy
         working-directory: backend
         run: cargo clippy -- -D warnings
@@ -592,45 +598,13 @@ jobs:
       - name: Terraform fmt
         run: terraform fmt -check -recursive infrastructure/terraform/
 
-  deploy:
-    if: github.ref == 'refs/heads/main'
-    needs: [lint]
-    runs-on: ubuntu-latest
-    concurrency:
-      group: <name>-deploy
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      # --- pnpm (if frontend) ---
-      - name: Install pnpm
-        run: corepack enable && corepack prepare pnpm@10.29.3 --activate
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store/v10
-          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-
-
-      # --- Rust + cargo-lambda (if Rust backend) ---
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            backend/target
-          key: rust-deploy-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-deploy-
+      # --- Deploy (main only) ---
       - name: Install cargo-lambda
+        if: github.ref == 'refs/heads/main'
         run: pip3 install cargo-lambda
 
-      # --- AWS credentials ---
       - uses: aws-actions/configure-aws-credentials@v5
+        if: github.ref == 'refs/heads/main'
         with:
           role-to-assume: ${{ secrets.OIDC_ROLE }}
           role-session-name: GitHubActions-${{ github.run_id }}
@@ -638,19 +612,20 @@ jobs:
 
       # --- Migrations (if project uses database) ---
       - uses: chris-arsenault/platform/.github/actions/run-migrations@main
+        if: github.ref == 'refs/heads/main'
         with:
           project: <name>
           migrations-dir: db/migrations
 
-      # --- Deploy ---
       - name: Deploy
+        if: github.ref == 'refs/heads/main'
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
         run: bash scripts/deploy.sh
 
   report:
     if: always()
-    needs: [lint, deploy]
+    needs: [ci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -661,15 +636,16 @@ jobs:
           aws-region: us-east-1
       - uses: chris-arsenault/platform/.github/actions/report-build@main
         with:
-          status: ${{ (needs.deploy.result == 'success' && 'success') || (needs.lint.result == 'failure' && 'failure') || needs.deploy.result }}
-          lint-passed: ${{ needs.lint.result == 'success' }}
+          status: ${{ needs.ci.result }}
+          lint-passed: ${{ needs.ci.result == 'success' }}
 ```
 
 **Caching notes:**
-- Use separate cache keys for lint vs deploy (`rust-lint-` vs `rust-deploy-`) since they may build different profiles
-- pnpm store caches on lockfile hash — invalidates on dependency changes
-- Cargo caches registry + git + target — invalidates on `Cargo.lock` changes
-- cargo-lambda can be installed via `pip3 install cargo-lambda` (fastest) or `cargo-binstall` (larger cache)
+- Rust cache key **must include the compiler version** — without it, a `rustc` update silently invalidates all cached artifacts but `actions/cache` refuses to overwrite the stale entry, causing permanent full recompiles. The `rustc --version | sha256sum` step handles this.
+- If using `dtolnay/rust-toolchain@stable`, use `steps.rust.outputs.cachekey` instead (it includes the resolved toolchain version).
+- pnpm store caches on lockfile hash — invalidates on dependency changes.
+- Cargo caches registry + git + target — invalidates on `Cargo.lock` changes.
+- cargo-lambda is installed via `pip3 install cargo-lambda` (~8s, not worth caching).
 
 ---
 
