@@ -27,6 +27,7 @@ runs:
   steps:
     - name: Ensure TrueNAS database
       run: |
+        set -euo pipefail
         REGION="us-east-1"
         DB_FN=$(aws ssm get-parameter --name /platform/truenas-db/function-name \
           --query Parameter.Value --output text --region "${REGION}" 2>/dev/null || echo "")
@@ -39,14 +40,20 @@ runs:
             --payload "{\"project\":\"${{ inputs.stack-name }}\"}" \
             --cli-binary-format raw-in-base64-out \
             --region "${REGION}" \
-            "${RESULT_FILE}" > /dev/null 2>&1
+            "${RESULT_FILE}" > /dev/null
 
           RESULT=$(cat "${RESULT_FILE}")
           rm "${RESULT_FILE}"
 
           if echo "${RESULT}" | grep -q '"errorMessage"'; then
-            echo "Note: TrueNAS DB manage returned error (project may not be registered, skipping)"
-            echo "${RESULT}" | python3 -m json.tool 2>/dev/null || true
+            # Check if it's just "not registered" (expected for projects without a DB)
+            if echo "${RESULT}" | grep -q 'not registered'; then
+              echo "Project not registered for TrueNAS DB, skipping."
+            else
+              echo "::error::TrueNAS DB manage failed"
+              echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+              exit 1
+            fi
           else
             echo "${RESULT}" | python3 -m json.tool 2>/dev/null || true
           fi
@@ -55,11 +62,10 @@ runs:
 
     - name: Deploy to Komodo
       run: |
+        set -euo pipefail
         REGION="us-east-1"
         FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")
-
-        COMPOSE_CONTENT=$(cat "${{ inputs.compose-file }}")
 
         # Build secrets JSON from KEY=ssm-path pairs
         SECRETS_JSON="{}"
@@ -81,7 +87,6 @@ runs:
         import json
         actions = []
 
-        # Set secrets as Komodo variables
         secrets = json.loads('$SECRETS_JSON')
         if secrets:
             actions.append({
@@ -90,8 +95,6 @@ runs:
                 'secret': True,
             })
 
-        # TODO: Create/update stack via Komodo API once API paths are confirmed
-        # For now, trigger deploy on existing stack
         actions.append({
             'type': 'Api',
             'method': 'POST',
@@ -114,11 +117,28 @@ runs:
         RESULT=$(cat "${RESULT_FILE}")
         rm "${RESULT_FILE}"
 
+        # Check for Lambda-level error
         if echo "${RESULT}" | grep -q '"errorMessage"'; then
-          echo "::error::Deploy to TrueNAS failed"
+          echo "::error::Deploy to TrueNAS failed (Lambda error)"
           echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
           exit 1
         fi
 
-        echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+        # Check for action-level failures in results array
+        if echo "${RESULT}" | python3 -c "
+        import sys, json
+        data = json.load(sys.stdin)
+        results = data.get('results', [])
+        failed = [r for r in results if not r.get('success', True)]
+        if failed:
+            for f in failed:
+                print(f'FAILED: {f.get(\"action\",\"unknown\")}: {f.get(\"error\",\"no details\")}')
+            sys.exit(1)
+        " 2>/dev/null; then
+          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+        else
+          echo "::error::Deploy to TrueNAS failed (action error)"
+          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+          exit 1
+        fi
       shell: bash
