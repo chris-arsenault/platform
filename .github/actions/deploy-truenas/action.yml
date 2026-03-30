@@ -25,7 +25,36 @@ inputs:
 runs:
   using: composite
   steps:
-    - run: |
+    - name: Ensure TrueNAS database
+      run: |
+        REGION="us-east-1"
+        DB_FN=$(aws ssm get-parameter --name /platform/truenas-db/function-name \
+          --query Parameter.Value --output text --region "${REGION}" 2>/dev/null || echo "")
+
+        if [ -n "${DB_FN}" ]; then
+          echo "Ensuring TrueNAS database for ${{ inputs.stack-name }}..."
+          RESULT_FILE=$(mktemp)
+          aws lambda invoke \
+            --function-name "${DB_FN}" \
+            --payload "{\"project\":\"${{ inputs.stack-name }}\"}" \
+            --cli-binary-format raw-in-base64-out \
+            --region "${REGION}" \
+            "${RESULT_FILE}" > /dev/null 2>&1
+
+          RESULT=$(cat "${RESULT_FILE}")
+          rm "${RESULT_FILE}"
+
+          if echo "${RESULT}" | grep -q '"errorMessage"'; then
+            echo "Note: TrueNAS DB manage returned error (project may not be registered, skipping)"
+            echo "${RESULT}" | python3 -m json.tool 2>/dev/null || true
+          else
+            echo "${RESULT}" | python3 -m json.tool 2>/dev/null || true
+          fi
+        fi
+      shell: bash
+
+    - name: Deploy to Komodo
+      run: |
         REGION="us-east-1"
         FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")

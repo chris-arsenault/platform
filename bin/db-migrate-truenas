@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Ensure the TrueNAS database and app role exist for the current project.
+# Reads project from platform.yml.
+set -euo pipefail
+
+REGION="us-east-1"
+PROJECT=$(platform-manifest project)
+
+FN=$(aws ssm get-parameter --name /platform/truenas-db/function-name \
+  --query Parameter.Value --output text --region "${REGION}")
+
+echo "Ensuring TrueNAS database for ${PROJECT}..."
+RESULT_FILE=$(mktemp)
+aws lambda invoke \
+  --function-name "${FN}" \
+  --payload "{\"project\":\"${PROJECT}\"}" \
+  --cli-binary-format raw-in-base64-out \
+  --region "${REGION}" \
+  "${RESULT_FILE}" > /dev/null
+
+RESULT=$(cat "${RESULT_FILE}")
+rm "${RESULT_FILE}"
+
+if echo "${RESULT}" | grep -q '"errorMessage"'; then
+  echo "TrueNAS DB manage FAILED:"
+  echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+  exit 1
+fi
+
+echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
