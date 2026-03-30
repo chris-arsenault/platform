@@ -17,9 +17,13 @@ runs:
     - name: Scan image for secrets
       run: |
         echo "Scanning ${{ inputs.image }} for secrets..."
-        trufflehog docker --image=${{ inputs.image }} --only-verified --fail 2>&1 || {
+        IMAGE_TAR=$(mktemp --suffix=.tar)
+        docker save "${{ inputs.image }}" -o "${IMAGE_TAR}"
+        trufflehog docker --image="file://${IMAGE_TAR}" --only-verified --fail 2>&1 || {
+          rm "${IMAGE_TAR}"
           echo "::error::Secrets detected in Docker image ${{ inputs.image }}. Do NOT push this image."
           exit 1
         }
+        rm "${IMAGE_TAR}"
         echo "No secrets found."
       shell: bash
