@@ -16,14 +16,27 @@ runs:
 
     - name: Scan image for secrets
       run: |
+        set -euo pipefail
         echo "Scanning ${{ inputs.image }} for secrets..."
         IMAGE_TAR=$(mktemp --suffix=.tar)
         docker save "${{ inputs.image }}" -o "${IMAGE_TAR}"
-        trufflehog docker --image="file://${IMAGE_TAR}" --only-verified --fail 2>&1 || {
-          rm "${IMAGE_TAR}"
+
+        OUTPUT=$(trufflehog docker --image="file://${IMAGE_TAR}" --only-verified --fail 2>&1) || EXIT_CODE=$?
+        rm "${IMAGE_TAR}"
+
+        if [ -n "${OUTPUT}" ]; then
+          echo "${OUTPUT}"
+        fi
+
+        if echo "${OUTPUT}" | grep -qi "error"; then
+          echo "::error::Trufflehog encountered an error scanning ${{ inputs.image }}"
+          exit 1
+        fi
+
+        if [ "${EXIT_CODE:-0}" -ne 0 ]; then
           echo "::error::Secrets detected in Docker image ${{ inputs.image }}. Do NOT push this image."
           exit 1
-        }
-        rm "${IMAGE_TAR}"
+        fi
+
         echo "No secrets found."
       shell: bash
