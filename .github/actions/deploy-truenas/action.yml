@@ -5,12 +5,19 @@ inputs:
   stack-name:
     description: Komodo stack name
     required: true
-  compose-file:
-    description: Path to docker-compose.yaml relative to repo root
+  repo:
+    description: GitHub repo in owner/repo format (e.g. chris-arsenault/truenas)
     required: true
-    default: docker/compose.yaml
-  image:
-    description: Full GHCR image reference (e.g. ghcr.io/chris-arsenault/sonarqube:abc123)
+  compose-path:
+    description: Path to compose file within the repo
+    required: true
+    default: compose.yaml
+  branch:
+    description: Git branch to deploy from
+    required: false
+    default: main
+  image-tag:
+    description: Container image tag (e.g. github.sha). Set as IMAGE_TAG Komodo variable.
     required: false
     default: ""
   secrets:
@@ -46,7 +53,6 @@ runs:
           rm "${RESULT_FILE}"
 
           if echo "${RESULT}" | grep -q '"errorMessage"'; then
-            # Check if it's just "not registered" (expected for projects without a DB)
             if echo "${RESULT}" | grep -q 'not registered'; then
               echo "Project not registered for TrueNAS DB, skipping."
             else
@@ -81,56 +87,52 @@ runs:
           rm "${result_file}"
         }
 
-        # Get the server ID from Komodo
+        # Get the server name from Komodo
         echo "Listing Komodo servers..."
         LIST_RESULT=$(invoke_lambda '{"actions":[{"type":"Api","method":"POST","path":"/read/ListServers","body":{}}]}')
 
-        SERVER_ID=$(echo "${LIST_RESULT}" | python3 -c "
+        SERVER_NAME=$(echo "${LIST_RESULT}" | python3 -c "
         import sys, json
         data = json.load(sys.stdin)
         results = data.get('results', [])
         if not results or not results[0].get('success'):
-            print('', end='')
-            sys.exit(0)
+            sys.exit(1)
         servers = results[0].get('body', [])
         if not servers:
-            print('', end='')
-            sys.exit(0)
-        # Use the first server
-        server = servers[0]
-        print(server.get('id', server.get('_id', {}).get('\$oid', '')), end='')
+            sys.exit(1)
+        print(servers[0].get('name', ''), end='')
         ")
 
-        if [ -z "${SERVER_ID}" ]; then
+        if [ -z "${SERVER_NAME}" ]; then
           echo "::error::No Komodo servers found"
           echo "${LIST_RESULT}" | python3 -m json.tool 2>/dev/null || echo "${LIST_RESULT}"
           exit 1
         fi
-        echo "Using server: ${SERVER_ID}"
+        echo "Using server: ${SERVER_NAME}"
 
-        # Create the stack (tolerate already-exists)
+        # Create the stack with git repo config (tolerate already-exists)
         PAYLOAD=$(python3 -c "
         import json, sys
-        with open(sys.argv[1]) as f:
-            compose = f.read()
         print(json.dumps({'actions': [{
             'type': 'Api',
             'method': 'POST',
             'path': '/write/CreateStack',
             'body': {
-                'name': sys.argv[2],
+                'name': sys.argv[1],
                 'config': {
-                    'server_id': sys.argv[3],
-                    'file_contents': compose,
+                    'server': sys.argv[2],
+                    'repo': sys.argv[3],
+                    'branch': sys.argv[4],
+                    'file_paths': [sys.argv[5]],
+                    'git_provider': 'github.com',
                 },
             },
         }]}))
-        " "${{ inputs.compose-file }}" "${{ inputs.stack-name }}" "${SERVER_ID}")
+        " "${{ inputs.stack-name }}" "${SERVER_NAME}" "${{ inputs.repo }}" "${{ inputs.branch }}" "${{ inputs.compose-path }}")
 
         echo "Ensuring stack ${{ inputs.stack-name }} exists..."
         RESULT=$(invoke_lambda "${PAYLOAD}")
 
-        # Tolerate "already exists" errors — any other failure is fatal
         if echo "${RESULT}" | grep -qi 'already exists'; then
           echo "Stack already exists, continuing."
         elif echo "${RESULT}" | python3 -c "
@@ -189,6 +191,15 @@ runs:
                 'secret': True,
             })
 
+        # Set image tag as a non-secret variable
+        image_tag = sys.argv[3]
+        if image_tag:
+            actions.append({
+                'type': 'SetVariables',
+                'variables': {'IMAGE_TAG': image_tag},
+                'secret': False,
+            })
+
         actions.append({
             'type': 'Api',
             'method': 'POST',
@@ -197,7 +208,7 @@ runs:
         })
 
         print(json.dumps({'actions': actions}))
-        " "$SECRETS_JSON" "${{ inputs.stack-name }}")
+        " "$SECRETS_JSON" "${{ inputs.stack-name }}" "${{ inputs.image-tag }}")
 
         echo "Deploying ${{ inputs.stack-name }} to TrueNAS..."
         RESULT_FILE=$(mktemp)
