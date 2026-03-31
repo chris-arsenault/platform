@@ -60,6 +60,68 @@ runs:
         fi
       shell: bash
 
+    - name: Ensure Komodo stack
+      run: |
+        set -euo pipefail
+        REGION="us-east-1"
+        FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+          --query Parameter.Value --output text --region "${REGION}")
+
+        PAYLOAD=$(python3 -c "
+        import json, sys
+        with open(sys.argv[1]) as f:
+            compose = f.read()
+        print(json.dumps({'actions': [{
+            'type': 'Api',
+            'method': 'POST',
+            'path': '/write/CreateStack',
+            'body': {
+                'name': sys.argv[2],
+                'config': {'file_contents': compose},
+            },
+        }]}))
+        " "${{ inputs.compose-file }}" "${{ inputs.stack-name }}")
+
+        echo "Ensuring stack ${{ inputs.stack-name }} exists..."
+        RESULT_FILE=$(mktemp)
+        aws lambda invoke \
+          --function-name "${FN}" \
+          --payload "${PAYLOAD}" \
+          --cli-binary-format raw-in-base64-out \
+          --region "${REGION}" \
+          "${RESULT_FILE}" > /dev/null
+
+        RESULT=$(cat "${RESULT_FILE}")
+        rm "${RESULT_FILE}"
+
+        # Tolerate "already exists" errors — any other failure is fatal
+        if echo "${RESULT}" | grep -qi 'already exists'; then
+          echo "Stack already exists, continuing."
+        elif echo "${RESULT}" | grep -q '"errorMessage"'; then
+          echo "::error::Stack creation failed"
+          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+          exit 1
+        elif echo "${RESULT}" | python3 -c "
+        import sys, json
+        data = json.load(sys.stdin)
+        results = data.get('results', [])
+        failed = [r for r in results if not r.get('success', True)]
+        if failed:
+            for f in failed:
+                err = f.get('error', '')
+                if 'already exists' in err.lower():
+                    continue
+                print(f'FAILED: {f.get(\"action\",\"unknown\")}: {err}')
+                sys.exit(1)
+        " 2>/dev/null; then
+          echo "Stack ensured."
+        else
+          echo "::error::Stack creation failed"
+          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
+          exit 1
+        fi
+      shell: bash
+
     - name: Deploy to Komodo
       run: |
         set -euo pipefail
@@ -84,10 +146,10 @@ runs:
 
         # Build the Lambda payload
         PAYLOAD=$(python3 -c "
-        import json
+        import json, sys
         actions = []
 
-        secrets = json.loads('$SECRETS_JSON')
+        secrets = json.loads(sys.argv[1])
         if secrets:
             actions.append({
                 'type': 'SetVariables',
@@ -99,11 +161,11 @@ runs:
             'type': 'Api',
             'method': 'POST',
             'path': '/execute/DeployStack',
-            'body': {'stack': '${{ inputs.stack-name }}'},
+            'body': {'stack': sys.argv[2]},
         })
 
         print(json.dumps({'actions': actions}))
-        ")
+        " "$SECRETS_JSON" "${{ inputs.stack-name }}")
 
         echo "Deploying ${{ inputs.stack-name }} to TrueNAS..."
         RESULT_FILE=$(mktemp)
