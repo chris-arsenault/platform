@@ -163,6 +163,20 @@ runs:
         FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")
 
+        invoke_lambda() {
+          local payload="$1"
+          local result_file
+          result_file=$(mktemp)
+          aws lambda invoke \
+            --function-name "${FN}" \
+            --payload "${payload}" \
+            --cli-binary-format raw-in-base64-out \
+            --region "${REGION}" \
+            "${result_file}" > /dev/null
+          cat "${result_file}"
+          rm "${result_file}"
+        }
+
         # Build secrets JSON from KEY=ssm-path pairs
         SECRETS_JSON="{}"
         if [ -n "${{ inputs.secrets }}" ]; then
@@ -178,26 +192,26 @@ runs:
         ")
         fi
 
-        # Build the Lambda payload
+        # Build the Lambda payload:
+        # 1. Resolve SSM secrets and set stack environment (written to .env for compose)
+        # 2. Deploy the stack
         PAYLOAD=$(python3 -c "
         import json, sys
         actions = []
 
         secrets = json.loads(sys.argv[1])
-        if secrets:
-            actions.append({
-                'type': 'SetVariables',
-                'variables': secrets,
-                'secret': True,
-            })
-
-        # Set image tag as a non-secret variable
         image_tag = sys.argv[3]
+
+        # Build environment: secrets from SSM + image tag
+        env_vars = dict(secrets)
         if image_tag:
+            env_vars['IMAGE_TAG'] = image_tag
+
+        if env_vars:
             actions.append({
-                'type': 'SetVariables',
-                'variables': {'IMAGE_TAG': image_tag},
-                'secret': False,
+                'type': 'SetEnvironment',
+                'stack': sys.argv[2],
+                'variables': env_vars,
             })
 
         actions.append({
@@ -211,16 +225,7 @@ runs:
         " "$SECRETS_JSON" "${{ inputs.stack-name }}" "${{ inputs.image-tag }}")
 
         echo "Deploying ${{ inputs.stack-name }} to TrueNAS..."
-        RESULT_FILE=$(mktemp)
-        aws lambda invoke \
-          --function-name "${FN}" \
-          --payload "${PAYLOAD}" \
-          --cli-binary-format raw-in-base64-out \
-          --region "${REGION}" \
-          "${RESULT_FILE}" > /dev/null
-
-        RESULT=$(cat "${RESULT_FILE}")
-        rm "${RESULT_FILE}"
+        RESULT=$(invoke_lambda "${PAYLOAD}")
 
         # Check for Lambda-level error
         if echo "${RESULT}" | grep -q '"errorMessage"'; then
