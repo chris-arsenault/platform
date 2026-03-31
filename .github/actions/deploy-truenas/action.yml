@@ -67,6 +67,48 @@ runs:
         FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")
 
+        invoke_lambda() {
+          local payload="$1"
+          local result_file
+          result_file=$(mktemp)
+          aws lambda invoke \
+            --function-name "${FN}" \
+            --payload "${payload}" \
+            --cli-binary-format raw-in-base64-out \
+            --region "${REGION}" \
+            "${result_file}" > /dev/null
+          cat "${result_file}"
+          rm "${result_file}"
+        }
+
+        # Get the server ID from Komodo
+        echo "Listing Komodo servers..."
+        LIST_RESULT=$(invoke_lambda '{"actions":[{"type":"Api","method":"POST","path":"/read/ListServers","body":{}}]}')
+
+        SERVER_ID=$(echo "${LIST_RESULT}" | python3 -c "
+        import sys, json
+        data = json.load(sys.stdin)
+        results = data.get('results', [])
+        if not results or not results[0].get('success'):
+            print('', end='')
+            sys.exit(0)
+        servers = results[0].get('body', [])
+        if not servers:
+            print('', end='')
+            sys.exit(0)
+        # Use the first server
+        server = servers[0]
+        print(server.get('id', server.get('_id', {}).get('\$oid', '')), end='')
+        ")
+
+        if [ -z "${SERVER_ID}" ]; then
+          echo "::error::No Komodo servers found"
+          echo "${LIST_RESULT}" | python3 -m json.tool 2>/dev/null || echo "${LIST_RESULT}"
+          exit 1
+        fi
+        echo "Using server: ${SERVER_ID}"
+
+        # Create the stack (tolerate already-exists)
         PAYLOAD=$(python3 -c "
         import json, sys
         with open(sys.argv[1]) as f:
@@ -77,30 +119,20 @@ runs:
             'path': '/write/CreateStack',
             'body': {
                 'name': sys.argv[2],
-                'config': {'file_contents': compose},
+                'config': {
+                    'server_id': sys.argv[3],
+                    'file_contents': compose,
+                },
             },
         }]}))
-        " "${{ inputs.compose-file }}" "${{ inputs.stack-name }}")
+        " "${{ inputs.compose-file }}" "${{ inputs.stack-name }}" "${SERVER_ID}")
 
         echo "Ensuring stack ${{ inputs.stack-name }} exists..."
-        RESULT_FILE=$(mktemp)
-        aws lambda invoke \
-          --function-name "${FN}" \
-          --payload "${PAYLOAD}" \
-          --cli-binary-format raw-in-base64-out \
-          --region "${REGION}" \
-          "${RESULT_FILE}" > /dev/null
-
-        RESULT=$(cat "${RESULT_FILE}")
-        rm "${RESULT_FILE}"
+        RESULT=$(invoke_lambda "${PAYLOAD}")
 
         # Tolerate "already exists" errors — any other failure is fatal
         if echo "${RESULT}" | grep -qi 'already exists'; then
           echo "Stack already exists, continuing."
-        elif echo "${RESULT}" | grep -q '"errorMessage"'; then
-          echo "::error::Stack creation failed"
-          echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
-          exit 1
         elif echo "${RESULT}" | python3 -c "
         import sys, json
         data = json.load(sys.stdin)
