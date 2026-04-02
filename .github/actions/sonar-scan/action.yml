@@ -35,16 +35,6 @@ runs:
         echo "url=${URL}" >> "$GITHUB_OUTPUT"
       shell: bash
 
-    - name: Determine scan mode
-      id: mode
-      run: |
-        if [ "${{ github.event_name }}" = "pull_request" ]; then
-          echo "args=-Dsonar.pullrequest.key=${{ github.event.pull_request.number }} -Dsonar.pullrequest.branch=${{ github.head_ref }} -Dsonar.pullrequest.base=${{ github.base_ref }} -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
-        else
-          echo "args=-Dsonar.branch.name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-        fi
-      shell: bash
-
     - name: SonarQube Scan
       uses: SonarSource/sonarqube-scan-action@v4
       with:
@@ -52,7 +42,6 @@ runs:
           -Dsonar.projectKey=${{ inputs.project-key }}
           -Dsonar.sources=${{ inputs.sources }}
           -Dsonar.exclusions=${{ inputs.exclusions }}
-          ${{ steps.mode.outputs.args }}
           ${{ inputs.extra-args }}
       env:
         SONAR_TOKEN: ${{ steps.token.outputs.token }}
