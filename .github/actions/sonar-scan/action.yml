@@ -1,0 +1,59 @@
+name: SonarQube Scan
+description: Run SonarQube analysis and push results. Requires AWS credentials (OIDC role) for SSM token retrieval.
+
+inputs:
+  project-key:
+    description: SonarQube project key (typically the repo name)
+    required: true
+  sources:
+    description: Comma-separated source directories
+    required: false
+    default: "."
+  exclusions:
+    description: Comma-separated glob patterns to exclude
+    required: false
+    default: ""
+  extra-args:
+    description: Additional sonar-scanner arguments (e.g. -Dsonar.test.inclusions=...)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Get SonarQube token from SSM
+      id: token
+      run: |
+        REGION="us-east-1"
+        TOKEN=$(aws ssm get-parameter --name /platform/sonarqube/ci-token \
+          --with-decryption --query Parameter.Value --output text --region "${REGION}")
+        echo "::add-mask::${TOKEN}"
+        echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+
+        URL=$(aws ssm get-parameter --name /platform/sonarqube/url \
+          --query Parameter.Value --output text --region "${REGION}")
+        echo "url=${URL}" >> "$GITHUB_OUTPUT"
+      shell: bash
+
+    - name: Determine scan mode
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "args=-Dsonar.pullrequest.key=${{ github.event.pull_request.number }} -Dsonar.pullrequest.branch=${{ github.head_ref }} -Dsonar.pullrequest.base=${{ github.base_ref }} -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "args=-Dsonar.branch.name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+        fi
+      shell: bash
+
+    - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v4
+      with:
+        args: >
+          -Dsonar.projectKey=${{ inputs.project-key }}
+          -Dsonar.sources=${{ inputs.sources }}
+          -Dsonar.exclusions=${{ inputs.exclusions }}
+          ${{ steps.mode.outputs.args }}
+          ${{ inputs.extra-args }}
+      env:
+        SONAR_TOKEN: ${{ steps.token.outputs.token }}
+        SONAR_HOST_URL: ${{ steps.token.outputs.url }}
