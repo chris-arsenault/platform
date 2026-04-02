@@ -89,7 +89,7 @@ runs:
 
         # Get the server name from Komodo
         echo "Listing Komodo servers..."
-        LIST_RESULT=$(invoke_lambda '{"actions":[{"type":"Api","method":"POST","path":"/read/ListServers","body":{}}]}')
+        LIST_RESULT=$(invoke_lambda '{"actions":[{"type":"ListServers"}]}')
 
         SERVER_NAME=$(echo "${LIST_RESULT}" | python3 -c "
         import sys, json
@@ -114,19 +114,12 @@ runs:
         PAYLOAD=$(python3 -c "
         import json, sys
         print(json.dumps({'actions': [{
-            'type': 'Api',
-            'method': 'POST',
-            'path': '/write/CreateStack',
-            'body': {
-                'name': sys.argv[1],
-                'config': {
-                    'server': sys.argv[2],
-                    'repo': sys.argv[3],
-                    'branch': sys.argv[4],
-                    'file_paths': [sys.argv[5]],
-                    'git_provider': 'github.com',
-                },
-            },
+            'type': 'CreateStack',
+            'name': sys.argv[1],
+            'server': sys.argv[2],
+            'repo': sys.argv[3],
+            'branch': sys.argv[4],
+            'file_paths': [sys.argv[5]],
         }]}))
         " "${{ inputs.stack-name }}" "${SERVER_NAME}" "${{ inputs.repo }}" "${{ inputs.branch }}" "${{ inputs.compose-path }}")
 
@@ -215,10 +208,8 @@ runs:
             })
 
         actions.append({
-            'type': 'Api',
-            'method': 'POST',
-            'path': '/execute/DeployStack',
-            'body': {'stack': sys.argv[2]},
+            'type': 'DeployStack',
+            'stack': sys.argv[2],
         })
 
         print(json.dumps({'actions': actions}))
