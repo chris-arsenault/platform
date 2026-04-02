@@ -5,6 +5,10 @@ inputs:
   image:
     description: Docker image to scan (must be built locally)
     required: true
+  exclude-paths:
+    description: File containing regex patterns of paths to exclude from scanning (one per line)
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -21,7 +25,12 @@ runs:
         IMAGE_TAR=$(mktemp --suffix=.tar)
         docker save "${{ inputs.image }}" -o "${IMAGE_TAR}"
 
-        OUTPUT=$(trufflehog docker --image="file://${IMAGE_TAR}" --only-verified --fail 2>&1) || EXIT_CODE=$?
+        EXCLUDE_ARG=""
+        if [ -n "${{ inputs.exclude-paths }}" ] && [ -f "${{ inputs.exclude-paths }}" ]; then
+          EXCLUDE_ARG="--exclude-paths=${{ inputs.exclude-paths }}"
+        fi
+
+        OUTPUT=$(trufflehog docker --image="file://${IMAGE_TAR}" --only-verified --fail ${EXCLUDE_ARG} 2>&1) || EXIT_CODE=$?
         rm "${IMAGE_TAR}"
 
         if [ -n "${OUTPUT}" ]; then
