@@ -41,6 +41,13 @@ runs:
         echo "url=${URL}" >> "$GITHUB_OUTPUT"
 
         echo "Project: ${{ inputs.project-key }}"
+
+        echo "Validating token..."
+        curl -sf -u "${TOKEN}:" "${URL}/api/authentication/validate"
+        echo ""
+        echo "Token user:"
+        curl -sf -u "${TOKEN}:" "${URL}/api/users/current"
+        echo ""
       shell: bash
 
     - name: SonarQube Scan
