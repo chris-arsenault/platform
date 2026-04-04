@@ -30,7 +30,7 @@ runs:
         echo "Reading CI token from SSM..."
         TOKEN=$(aws ssm get-parameter --name /platform/sonarqube/ci-token \
           --with-decryption --query Parameter.Value --output text --region "${REGION}")
-        echo "Token length: ${#TOKEN}, prefix: ${TOKEN:0:4}..."
+        echo "Token length: ${#TOKEN}, prefix: ${TOKEN:0:5}..."
         echo "::add-mask::${TOKEN}"
         echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
