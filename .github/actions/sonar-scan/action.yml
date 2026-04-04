@@ -27,14 +27,20 @@ runs:
         set -euo pipefail
         REGION="us-east-1"
 
+        echo "Reading CI token from SSM..."
         TOKEN=$(aws ssm get-parameter --name /platform/sonarqube/ci-token \
           --with-decryption --query Parameter.Value --output text --region "${REGION}")
+        echo "Token length: ${#TOKEN}, prefix: ${TOKEN:0:4}..."
         echo "::add-mask::${TOKEN}"
         echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
+        echo "Reading SonarQube URL from SSM..."
         URL=$(aws ssm get-parameter --name /platform/sonarqube/url \
           --query Parameter.Value --output text --region "${REGION}")
+        echo "URL: ${URL}"
         echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+        echo "Project: ${{ inputs.project-key }}"
       shell: bash
 
     - name: SonarQube Scan
