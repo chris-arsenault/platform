@@ -82,10 +82,14 @@ jobs:
         working-directory: backend
         run: cargo fmt -- --check
 
+      - name: Install cargo-tarpaulin
+        if: steps.config.outputs.has_rust == 'true'
+        run: cargo install cargo-tarpaulin
+
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
-        run: cargo test --lib
+        run: cargo tarpaulin --lib --out lcov --output-dir coverage
 
       # ── TypeScript ──────────────────────────────────────────
 
@@ -126,7 +130,7 @@ jobs:
         working-directory: frontend
         run: |
           if pnpm exec vitest --help > /dev/null 2>&1; then
-            pnpm exec vitest run
+            pnpm exec vitest run --coverage
           fi
 
       # ── Python ──────────────────────────────────────────────
@@ -193,8 +197,16 @@ jobs:
           if [ "${{ steps.config.outputs.has_terraform }}" = "true" ]; then
             sources="${sources:+$sources,}infrastructure/terraform"
           fi
+          extra_args=""
+          if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
+            extra_args="${extra_args} -Dsonar.rust.lcov.reportPaths=backend/coverage/lcov.info"
+          fi
+          if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
+            extra_args="${extra_args} -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info"
+          fi
           echo "sources=${sources}" >> "$GITHUB_OUTPUT"
           echo "exclusions=${exclusions}" >> "$GITHUB_OUTPUT"
+          echo "extra_args=${extra_args}" >> "$GITHUB_OUTPUT"
         shell: bash
 
       - uses: chris-arsenault/platform/.github/actions/sonar-scan@main
@@ -203,6 +215,7 @@ jobs:
           project-key: ${{ steps.config.outputs.project }}
           sources: ${{ steps.sonar.outputs.sources }}
           exclusions: ${{ steps.sonar.outputs.exclusions }}
+          extra-args: ${{ steps.sonar.outputs.extra_args }}
 
       # ── Deploy (main only) ─────────────────────────────────
 
