@@ -1,0 +1,234 @@
+name: CI/CD
+
+on:
+  workflow_call:
+    secrets:
+      OIDC_ROLE:
+        required: true
+      STATE_BUCKET:
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.ref == 'refs/heads/main' && format('{0}-deploy', github.event.repository.name) || format('{0}-{1}', github.event.repository.name, github.ref) }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: chris-arsenault/platform/.github/actions/governance-check@main
+
+      - name: Read platform.yml
+        id: config
+        run: |
+          set -euo pipefail
+          python3 << 'PYEOF'
+          import yaml, os
+          with open("platform.yml") as f:
+              cfg = yaml.safe_load(f)
+          stack = cfg.get("stack", [])
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a") as f:
+              f.write(f"project={cfg['project']}\n")
+              f.write(f"has_rust={'true' if 'rust' in stack else 'false'}\n")
+              f.write(f"has_typescript={'true' if 'typescript' in stack else 'false'}\n")
+              f.write(f"has_python={'true' if 'python' in stack else 'false'}\n")
+              f.write(f"has_terraform={'true' if 'terraform' in stack else 'false'}\n")
+              f.write(f"has_migrations={'true' if cfg.get('migrations') else 'false'}\n")
+              f.write(f"migrations_dir={cfg.get('migrations', '')}\n")
+          PYEOF
+        shell: bash
+
+      # ── Rust ────────────────────────────────────────────────
+
+      - name: Rust version key
+        if: steps.config.outputs.has_rust == 'true'
+        id: rust
+        run: echo "cachekey=$(rustc --version | sha256sum | head -c12)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Rust
+        if: steps.config.outputs.has_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
+
+      - name: Lint clippy
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo clippy -- -D warnings
+
+      - name: Lint rustfmt
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo fmt -- --check
+
+      # ── TypeScript ──────────────────────────────────────────
+
+      - uses: actions/setup-node@v6
+        if: steps.config.outputs.has_typescript == 'true'
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        if: steps.config.outputs.has_typescript == 'true'
+        run: corepack enable && corepack prepare pnpm@10.29.3 --activate
+
+      - name: Cache pnpm store
+        if: steps.config.outputs.has_typescript == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store/v10
+          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      - name: Install frontend deps
+        if: steps.config.outputs.has_typescript == 'true'
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint eslint
+        if: steps.config.outputs.has_typescript == 'true'
+        working-directory: frontend
+        run: pnpm exec eslint .
+
+      - name: Lint typecheck
+        if: steps.config.outputs.has_typescript == 'true'
+        working-directory: frontend
+        run: pnpm exec tsc --noEmit
+
+      # ── Python ──────────────────────────────────────────────
+
+      - uses: actions/setup-python@v6
+        if: steps.config.outputs.has_python == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: steps.config.outputs.has_python == 'true'
+        run: pip install uv
+
+      - name: Install backend deps
+        if: steps.config.outputs.has_python == 'true'
+        working-directory: backend
+        run: uv sync --extra dev
+
+      - name: Lint backend
+        if: steps.config.outputs.has_python == 'true'
+        working-directory: backend
+        run: uv run --extra dev ruff check src/
+
+      - name: Lint format backend
+        if: steps.config.outputs.has_python == 'true'
+        working-directory: backend
+        run: uv run --extra dev ruff format --check src/
+
+      # ── Terraform ───────────────────────────────────────────
+
+      - uses: hashicorp/setup-terraform@v4
+        if: steps.config.outputs.has_terraform == 'true'
+
+      - name: Lint terraform
+        if: steps.config.outputs.has_terraform == 'true'
+        run: terraform fmt -check -recursive infrastructure/terraform/
+
+      # ── SonarQube ───────────────────────────────────────────
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          aws-region: us-east-1
+
+      - name: Build sonar sources list
+        id: sonar
+        run: |
+          set -euo pipefail
+          sources=""
+          exclusions="**/.terraform/**"
+          extra=""
+          if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
+            sources="${sources:+$sources,}backend"
+            exclusions="${exclusions},**/target/**"
+          fi
+          if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
+            sources="${sources:+$sources,}frontend/src"
+            exclusions="${exclusions},**/node_modules/**,**/dist/**"
+          fi
+          if [ "${{ steps.config.outputs.has_python }}" = "true" ]; then
+            sources="${sources:+$sources,}backend/src"
+          fi
+          if [ "${{ steps.config.outputs.has_terraform }}" = "true" ]; then
+            sources="${sources:+$sources,}infrastructure/terraform"
+          fi
+          echo "sources=${sources}" >> "$GITHUB_OUTPUT"
+          echo "exclusions=${exclusions}" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - uses: chris-arsenault/platform/.github/actions/sonar-scan@main
+        continue-on-error: true
+        with:
+          project-key: ${{ steps.config.outputs.project }}
+          sources: ${{ steps.sonar.outputs.sources }}
+          exclusions: ${{ steps.sonar.outputs.exclusions }}
+
+      # ── Deploy (main only) ─────────────────────────────────
+
+      - name: Install cargo-lambda
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
+        run: pip3 install cargo-lambda
+
+      - name: Build backend
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo lambda build --release
+
+      - name: Build frontend
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
+        working-directory: frontend
+        run: pnpm run build
+
+      - name: Build Lambda
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_python == 'true'
+        run: bash scripts/build-lambda.sh
+
+      - uses: chris-arsenault/platform/.github/actions/run-migrations@main
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_migrations == 'true'
+        with:
+          project: ${{ steps.config.outputs.project }}
+          migrations-dir: ${{ steps.config.outputs.migrations_dir }}
+
+      - name: Terraform deploy
+        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_terraform == 'true'
+        env:
+          STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
+        run: |
+          terraform -chdir=infrastructure/terraform init -reconfigure \
+            -backend-config="bucket=${STATE_BUCKET}" \
+            -backend-config="region=us-east-1" \
+            -backend-config="use_lockfile=true"
+          terraform -chdir=infrastructure/terraform apply -auto-approve
+
+  report:
+    if: always()
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          aws-region: us-east-1
+      - uses: chris-arsenault/platform/.github/actions/report-build@main
