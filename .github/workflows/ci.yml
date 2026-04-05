@@ -82,6 +82,11 @@ jobs:
         working-directory: backend
         run: cargo fmt -- --check
 
+      - name: Test rust
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo test --lib
+
       # ── TypeScript ──────────────────────────────────────────
 
       - uses: actions/setup-node@v6
@@ -115,6 +120,14 @@ jobs:
         if: steps.config.outputs.has_typescript == 'true'
         working-directory: frontend
         run: pnpm exec tsc --noEmit
+
+      - name: Test frontend
+        if: steps.config.outputs.has_typescript == 'true'
+        working-directory: frontend
+        run: |
+          if pnpm exec vitest --help > /dev/null 2>&1; then
+            pnpm exec vitest run
+          fi
 
       # ── Python ──────────────────────────────────────────────
 
