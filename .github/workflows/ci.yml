@@ -95,12 +95,8 @@ jobs:
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: |
-          set -euo pipefail
-          eval "$(cargo llvm-cov show-env --export-prefix)"
-          cargo llvm-cov clean --workspace
-          cargo test --release --lib
           mkdir -p coverage
-          cargo llvm-cov report --release --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
 
       # ── TypeScript ──────────────────────────────────────────
 
