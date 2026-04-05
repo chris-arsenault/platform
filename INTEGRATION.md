@@ -16,7 +16,9 @@
 | **Testing** (what to test, testcontainers, mocks, organization) | [ahara-standards/standards/testing.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/testing.md) |
 | **Git practices** (gitignore, branching, commits) | [ahara-standards/standards/git.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/git.md) |
 | **Custom ESLint rules** | `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules` |
-| **Shared GitHub Actions** | `run-migrations` and `report-build` in `platform/.github/actions/` — use in CI workflows |
+| **CI/CD workflow** (shared workflow, platform.yml, governance, SonarQube) | [CI-WORKFLOW.md](CI-WORKFLOW.md) |
+| **TrueNAS deploy** (Docker, Komodo, secret-paths.yml, networking) | [TRUENAS-DEPLOY.md](TRUENAS-DEPLOY.md) |
+| **Shared GitHub Actions** | `sonar-scan`, `report-build`, `governance-check`, `run-migrations`, `deploy-truenas` in `platform/.github/actions/` |
 | **Platform CLI tools** | `~/src/platform/bin/` — `db-migrate`, `db-seed`, `db-rollback`, `db-drop`, `db-noop`, `db-restore` |
 | **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
 | **Dynamic OpenGraph** (per-route OG tags for SPAs) | [OPENGRAPH.md](OPENGRAPH.md) |
@@ -51,9 +53,8 @@ Use this to determine which steps apply to your project.
 | 4 | ALB backend (listener rule, cert, DNS) | Your project | If project has an HTTP API |
 | 5 | Database (platform.yml, migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
 | 6 | Cognito client | Your project | If project has a frontend with login |
-| 7 | Lint and test setup (see [ahara-standards](https://github.com/chris-arsenault/ahara-standards)) | Your project | Always |
-| 8 | CI dashboard reporting | Your project workflow | Always |
-| 9 | Required project files (README, LICENSE, CLAUDE.md) | Your project | Always |
+| 7 | CI/CD workflow (shared workflow + platform.yml + Makefile) | Your project — see [CI-WORKFLOW.md](CI-WORKFLOW.md) | Always |
+| 8 | Required project files (README, LICENSE, CLAUDE.md, platform.yml) | Your project | Always |
 
 > **IMPORTANT for AI agents:** Steps 1 and 5 require changes to **other repos** (`platform-control` and `platform-services`). These are not documentation tasks — they are blocking prerequisites. You MUST make the actual file changes in those repos, not defer them to a docs/ folder or TODO list. The project cannot deploy without them. Treat cross-repo changes the same as in-project changes: make the edit, verify it, and tell the user it's done.
 
@@ -506,42 +507,11 @@ Pass the client ID and pool ID to your frontend as build-time env vars or runtim
 
 ---
 
-## Step 7: Lint and Test Setup
+## Step 7: CI/CD Workflow
 
-Follow the standards in [ahara-standards](https://github.com/chris-arsenault/ahara-standards) for your project's tech stack:
+See **[CI-WORKFLOW.md](CI-WORKFLOW.md)** for full details.
 
-- **TypeScript/React**: [standards/typescript.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/typescript.md) — ESLint, Prettier, tsconfig, custom rules, vitest
-- **Rust**: [standards/rust.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/rust.md) — clippy, rustfmt, testcontainers
-- **Terraform**: [standards/terraform.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/terraform.md) — formatting
-- **Scripts/Makefile**: [standards/scripts.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/scripts.md) — standard targets
-
-Custom ESLint rules: `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules`.
-
----
-
-## Step 8: CI Dashboard Reporting
-
-Add as the **last step** in your GitHub Actions workflow, **after** the OIDC credentials step:
-
-```yaml
-- uses: chris-arsenault/platform/.github/actions/report-build@main
-  if: always()
-  with:
-    lint-passed: "true"   # optional
-    test-passed: "true"   # optional
-```
-
-Reads ingest URL and token from SSM. No secrets to configure.
-
----
-
-## GitHub Actions Workflow Template
-
-Adapt this template to your project. Remove sections that don't apply (e.g., Rust steps for a TypeScript-only project, migrations for a project without a database).
-
-The workflow uses a **single `ci` job** that runs lint on all branches and conditionally deploys on main. This avoids duplicate runner setup, duplicate cache restores, and the overhead of separate jobs. Deploy steps are gated with `if: github.ref == 'refs/heads/main'`.
-
-The concurrency group switches per context: PRs cancel in-progress runs on the same branch, while main deploys queue without cancellation to avoid interrupted deployments.
+Standard projects use the shared reusable workflow — the entire `.github/workflows/ci.yml` is:
 
 ```yaml
 name: CI/CD
@@ -559,129 +529,13 @@ permissions:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
-    concurrency:
-      group: ${{ github.ref == 'refs/heads/main' && '<name>-deploy' || format('<name>-{0}', github.ref) }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v4
-
-      # --- Node/pnpm (for TypeScript frontends) ---
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-      - name: Install pnpm
-        run: corepack enable && corepack prepare pnpm@10.29.3 --activate
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store/v10
-          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
-      - name: Lint frontend
-        working-directory: frontend
-        run: pnpm exec eslint .
-      - name: Typecheck frontend
-        working-directory: frontend
-        run: pnpm exec tsc --noEmit
-
-      # --- Rust (for Rust backends) ---
-      - name: Rust version key
-        id: rust
-        run: echo "cachekey=$(rustc --version | sha256sum | head -c12)" >> "$GITHUB_OUTPUT"
-      - name: Cache Rust
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            backend/target
-          key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
-      - name: Clippy
-        working-directory: backend
-        run: cargo clippy -- -D warnings
-      - name: Rustfmt
-        working-directory: backend
-        run: cargo fmt -- --check
-
-      # --- Terraform ---
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive infrastructure/terraform/
-
-      # --- Deploy (main only) ---
-      # These steps replicate what scripts/deploy.sh does locally.
-      # Do NOT call deploy.sh from CI — keep steps explicit.
-
-      - name: Install cargo-lambda
-        if: github.ref == 'refs/heads/main'
-        run: pip3 install cargo-lambda
-
-      - uses: aws-actions/configure-aws-credentials@v5
-        if: github.ref == 'refs/heads/main'
-        with:
-          role-to-assume: ${{ secrets.OIDC_ROLE }}
-          role-session-name: GitHubActions-${{ github.run_id }}
-          aws-region: us-east-1
-
-      # --- Build (if Rust backend) ---
-      - name: Build Lambdas
-        if: github.ref == 'refs/heads/main'
-        working-directory: backend
-        run: cargo lambda build --release
-
-      # --- Build (if frontend) ---
-      - name: Build frontend
-        if: github.ref == 'refs/heads/main'
-        working-directory: frontend
-        run: pnpm run build
-
-      # --- Migrations (if project uses database) ---
-      - uses: chris-arsenault/platform/.github/actions/run-migrations@main
-        if: github.ref == 'refs/heads/main'
-        with:
-          project: <name>
-          migrations-dir: db/migrations
-
-      # --- Terraform ---
-      - name: Terraform deploy
-        if: github.ref == 'refs/heads/main'
-        env:
-          STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
-        run: |
-          terraform -chdir=infrastructure/terraform init -reconfigure \
-            -backend-config="bucket=${STATE_BUCKET}" \
-            -backend-config="region=us-east-1" \
-            -backend-config="use_lockfile=true"
-          terraform -chdir=infrastructure/terraform apply -auto-approve
-
-  report:
-    if: always()
-    needs: [ci]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ secrets.OIDC_ROLE }}
-          role-session-name: GitHubActions-${{ github.run_id }}
-          aws-region: us-east-1
-      - uses: chris-arsenault/platform/.github/actions/report-build@main
-        with:
-          status: ${{ needs.ci.result }}
-          lint-passed: ${{ needs.ci.result == 'success' }}
+    uses: chris-arsenault/platform/.github/workflows/ci.yml@main
+    secrets: inherit
 ```
 
-**Caching notes:**
-- Rust cache key **must include the compiler version** — without it, a `rustc` update silently invalidates all cached artifacts but `actions/cache` refuses to overwrite the stale entry, causing permanent full recompiles. The `rustc --version | sha256sum` step handles this.
-- If using `dtolnay/rust-toolchain@stable`, use `steps.rust.outputs.cachekey` instead (it includes the resolved toolchain version).
-- pnpm store caches on lockfile hash — invalidates on dependency changes.
-- Cargo caches registry + git + target — invalidates on `Cargo.lock` changes.
-- cargo-lambda is installed via `pip3 install cargo-lambda` (~8s, not worth caching).
+The shared workflow reads `platform.yml` and runs lint, test, sonar, deploy, and reporting automatically. No per-project configuration needed beyond declaring the stack.
+
+For TrueNAS-hosted services, see **[TRUENAS-DEPLOY.md](TRUENAS-DEPLOY.md)**.
 
 ---
 

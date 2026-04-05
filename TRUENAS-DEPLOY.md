@@ -1,0 +1,161 @@
+# TrueNAS Deploy Guide
+
+> **AUDIENCE**: AI agents deploying Docker Compose services to TrueNAS via Komodo.
+
+## Overview
+
+TrueNAS-hosted services are deployed as Docker Compose stacks managed by [Komodo](https://github.com/moghingold/komodo). The deploy flow:
+
+1. Terraform creates AWS resources (Lambda, SSM params, Cognito client)
+2. Docker image is built and pushed to GHCR
+3. Komodo pulls the compose file from GitHub, sets environment from SSM, and deploys
+
+The shared reusable workflow handles steps 2-3 automatically when `truenas: true` is set in `platform.yml`.
+
+---
+
+## Project Layout
+
+```
+<project>/
+  backend/               # Rust Lambda (if any)
+    Cargo.toml
+    src/
+  compose.yaml           # Docker Compose for TrueNAS (root level, not nested)
+  Dockerfile             # Docker image (root level)
+  secret-paths.yml       # SSM paths for compose environment variables
+  infrastructure/
+    terraform/
+  platform.yml
+  Makefile
+  CLAUDE.md
+```
+
+Key difference from standard projects: `compose.yaml` and `Dockerfile` live at the repo root.
+
+---
+
+## platform.yml
+
+```yaml
+project: <name>
+prefix: <name>
+stack:
+  - rust          # If project has a Lambda
+  - terraform
+truenas: true     # Enables Docker + Komodo deploy
+```
+
+The `truenas: true` flag tells the shared workflow to:
+1. Build a Docker image tagged `ghcr.io/chris-arsenault/<project>:<sha>`
+2. Push to GHCR
+3. Read `secret-paths.yml` for Komodo environment variables
+4. Call the `deploy-truenas` action with stack name = project name
+
+---
+
+## secret-paths.yml
+
+Maps compose environment variable names to SSM parameter paths. These are **paths, not values** — safe to commit:
+
+```yaml
+DB_USER: /platform/truenas-db/<name>/username
+DB_PASSWORD: /platform/truenas-db/<name>/password
+ADMIN_PASSWORD: /platform/<name>/admin-password
+```
+
+The `deploy-truenas` action reads this file, resolves the SSM values via the Komodo proxy Lambda, and sets them in the Komodo stack environment. Compose reads them as `${DB_USER}`, `${DB_PASSWORD}`, etc.
+
+---
+
+## compose.yaml
+
+Standard Docker Compose with `${VAR}` references to environment variables set by Komodo:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/chris-arsenault/<project>:${IMAGE_TAG}
+    restart: unless-stopped
+    ports:
+      - "<host-port>:8080"
+    environment:
+      DB_USER: "${DB_USER}"
+      DB_PASSWORD: "${DB_PASSWORD}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+```
+
+`IMAGE_TAG` is set automatically by the deploy action to the git SHA.
+
+---
+
+## TrueNAS Database
+
+TrueNAS services use a separate PostgreSQL instance on TrueNAS (192.168.66.3:5432), not the shared RDS. Database management is handled by the `platform-db-migrate-truenas` Lambda in `platform-services`.
+
+To register a new TrueNAS database project, add it to `var.truenas_db_projects` in `platform-services/infrastructure/terraform/db-migrate-truenas.tf`:
+
+```hcl
+variable "truenas_db_projects" {
+  default = {
+    <name> = { db_name = "<name>" }
+  }
+}
+```
+
+The Lambda creates the database, application role, and publishes credentials to SSM at `/platform/truenas-db/<name>/username` and `/platform/truenas-db/<name>/password`.
+
+---
+
+## Networking
+
+TrueNAS services are reached via WireGuard VPN. The reverse proxy (nginx on EC2) routes traffic from the shared ALB to TrueNAS:
+
+- **ALB** → **CloudFront** → **ALB** → **nginx reverse proxy** → **WireGuard** → **TrueNAS**
+- Routes are defined in `platform-network/infrastructure/terraform/locals.tf` under `reverse_proxy_routes`
+- Each route needs: `address` (TrueNAS IP), `port` (container host port), `auth` (cognito/passthrough)
+- Optional: `max_body_size` for routes that handle large uploads
+
+To add a new reverse proxy route, add an entry to `reverse_proxy_routes` in platform-network.
+
+---
+
+## Custom Post-Deploy Steps
+
+If a service needs steps after the standard deploy (e.g., bootstrapping tokens, seeding data), add them as a separate job in the caller workflow:
+
+```yaml
+jobs:
+  ci:
+    uses: chris-arsenault/platform/.github/workflows/ci.yml@main
+    secrets: inherit
+
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    needs: [ci]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          aws-region: us-east-1
+      # ... custom steps ...
+```
+
+---
+
+## WAF Considerations
+
+The ALB has a WAF with `AWSManagedRulesCommonRuleSet`. The `SizeRestrictions_BODY` rule blocks request bodies over 8KB. If your service accepts large uploads through the reverse proxy:
+
+1. Add `max_body_size` to the route in `reverse_proxy_routes` (nginx layer)
+2. The WAF has an exemption for `sonar.ahara.io/api/ce/submit` — similar exemptions can be added in `platform-network/infrastructure/terraform/waf.tf`
