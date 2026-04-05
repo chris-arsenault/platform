@@ -2,6 +2,11 @@ name: CI/CD
 
 on:
   workflow_call:
+    inputs:
+      deploy:
+        description: Run standard deploy (build + migrate + terraform apply) on main
+        type: boolean
+        default: true
     secrets:
       OIDC_ROLE:
         required: true
@@ -186,31 +191,31 @@ jobs:
       # ── Deploy (main only) ─────────────────────────────────
 
       - name: Install cargo-lambda
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
         run: pip3 install cargo-lambda
 
       - name: Build backend
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: cargo lambda build --release
 
       - name: Build frontend
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
         working-directory: frontend
         run: pnpm run build
 
       - name: Build Lambda
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_python == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_python == 'true'
         run: bash scripts/build-lambda.sh
 
       - uses: chris-arsenault/platform/.github/actions/run-migrations@main
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_migrations == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_migrations == 'true'
         with:
           project: ${{ steps.config.outputs.project }}
           migrations-dir: ${{ steps.config.outputs.migrations_dir }}
 
       - name: Terraform deploy
-        if: github.ref == 'refs/heads/main' && steps.config.outputs.has_terraform == 'true'
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_terraform == 'true'
         env:
           STATE_BUCKET: ${{ secrets.STATE_BUCKET }}
         run: |
