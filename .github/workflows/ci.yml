@@ -76,9 +76,21 @@ jobs:
         working-directory: backend
         run: cargo fmt -- --check
 
-      - name: Install cargo-lambda
+      - name: Install Rust tools
         if: steps.config.outputs.has_rust == 'true'
-        run: pip3 install cargo-lambda
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda,cargo-llvm-cov
+
+      - name: Setup coverage environment
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: |
+          eval "$(cargo llvm-cov show-env --export-prefix)"
+          echo "RUSTFLAGS=${RUSTFLAGS}" >> "$GITHUB_ENV"
+          echo "LLVM_PROFILE_FILE=${LLVM_PROFILE_FILE}" >> "$GITHUB_ENV"
+          echo "CARGO_LLVM_COV_TARGET_DIR=${CARGO_LLVM_COV_TARGET_DIR:-}" >> "$GITHUB_ENV"
+          cargo llvm-cov clean --workspace
 
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
@@ -89,6 +101,11 @@ jobs:
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: cargo test --release --lib
+
+      - name: Generate coverage report
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo llvm-cov report --release --lcov --output-path coverage/lcov.info
 
       # ── TypeScript ──────────────────────────────────────────
 
@@ -197,6 +214,9 @@ jobs:
             sources="${sources:+$sources,}infrastructure/terraform"
           fi
           extra_args=""
+          if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
+            extra_args="${extra_args} -Dsonar.rust.lcov.reportPaths=backend/coverage/lcov.info"
+          fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
             extra_args="${extra_args} -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info"
           fi
