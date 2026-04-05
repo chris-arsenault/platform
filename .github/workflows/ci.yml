@@ -71,24 +71,24 @@ jobs:
           key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
 
-      - name: Lint clippy
-        if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
-        run: cargo clippy -- -D warnings
-
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: cargo fmt -- --check
 
-      - name: Install cargo-tarpaulin
+      - name: Install cargo-lambda
         if: steps.config.outputs.has_rust == 'true'
-        run: cargo install cargo-tarpaulin
+        run: pip3 install cargo-lambda
+
+      - name: Lint clippy
+        if: steps.config.outputs.has_rust == 'true'
+        working-directory: backend
+        run: cargo clippy --release -- -D warnings
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
-        run: cargo tarpaulin --lib --out lcov --output-dir coverage
+        run: cargo test --release --lib
 
       # ── TypeScript ──────────────────────────────────────────
 
@@ -197,9 +197,6 @@ jobs:
             sources="${sources:+$sources,}infrastructure/terraform"
           fi
           extra_args=""
-          if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
-            extra_args="${extra_args} -Dsonar.rust.lcov.reportPaths=backend/coverage/lcov.info"
-          fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
             extra_args="${extra_args} -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info"
           fi
@@ -217,10 +214,6 @@ jobs:
           extra-args: ${{ steps.sonar.outputs.extra_args }}
 
       # ── Deploy (main only) ─────────────────────────────────
-
-      - name: Install cargo-lambda
-        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
-        run: pip3 install cargo-lambda
 
       - name: Build backend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
