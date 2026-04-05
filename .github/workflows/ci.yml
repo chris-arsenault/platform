@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 << 'PYEOF'
-          import yaml, os
+          import yaml, os, json
           with open("platform.yml") as f:
               cfg = yaml.safe_load(f)
           stack = cfg.get("stack", [])
@@ -45,6 +45,11 @@ jobs:
               f.write(f"has_migrations={'true' if cfg.get('migrations') else 'false'}\n")
               f.write(f"migrations_dir={cfg.get('migrations', '')}\n")
               f.write(f"has_truenas={'true' if cfg.get('truenas') else 'false'}\n")
+              images = cfg.get('images', [])
+              if images:
+                  f.write(f"images={json.dumps(images)}\n")
+              else:
+                  f.write(f"images=\n")
           PYEOF
         shell: bash
 
@@ -250,20 +255,34 @@ jobs:
 
       # ── TrueNAS deploy (Docker + Komodo) ────────────────────
 
-      - name: Build Docker image
+      - name: Build and push Docker images
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
         run: |
-          docker build \
-            -t ghcr.io/chris-arsenault/${{ steps.config.outputs.project }}:${{ github.sha }} \
-            -t ghcr.io/chris-arsenault/${{ steps.config.outputs.project }}:latest \
-            .
-
-      - name: Push to GHCR
-        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
-        run: |
+          set -euo pipefail
           echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker push ghcr.io/chris-arsenault/${{ steps.config.outputs.project }}:${{ github.sha }}
-          docker push ghcr.io/chris-arsenault/${{ steps.config.outputs.project }}:latest
+
+          PROJECT="${{ steps.config.outputs.project }}"
+          SHA="${{ github.sha }}"
+          IMAGES='${{ steps.config.outputs.images }}'
+
+          if [ -n "$IMAGES" ] && [ "$IMAGES" != "null" ]; then
+            # Multi-image: one per component
+            for COMPONENT in $(echo "$IMAGES" | python3 -c "import sys,json; [print(c) for c in json.load(sys.stdin)]"); do
+              TAG="ghcr.io/chris-arsenault/${PROJECT}/${COMPONENT}:${SHA}"
+              TAG_LATEST="ghcr.io/chris-arsenault/${PROJECT}/${COMPONENT}:latest"
+              echo "Building ${TAG} from ${COMPONENT}/"
+              docker build -t "$TAG" -t "$TAG_LATEST" "${COMPONENT}/"
+              docker push "$TAG"
+              docker push "$TAG_LATEST"
+            done
+          else
+            # Single image from root
+            TAG="ghcr.io/chris-arsenault/${PROJECT}:${SHA}"
+            TAG_LATEST="ghcr.io/chris-arsenault/${PROJECT}:latest"
+            docker build -t "$TAG" -t "$TAG_LATEST" .
+            docker push "$TAG"
+            docker push "$TAG_LATEST"
+          fi
 
       - name: Read TrueNAS secrets
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
