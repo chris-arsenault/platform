@@ -16,6 +16,8 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: write
+  actions: read
 
 jobs:
   ci:
