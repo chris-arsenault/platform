@@ -16,14 +16,14 @@ The shared reusable workflow handles steps 2-3 automatically when `truenas: true
 
 ## Project Layout
 
+### Single-image project (e.g., nas-sonarqube)
+
 ```
 <project>/
-  backend/               # Rust Lambda (if any)
-    Cargo.toml
-    src/
-  compose.yaml           # Docker Compose for TrueNAS (root level, not nested)
-  Dockerfile             # Docker image (root level)
+  compose.yaml           # Docker Compose for TrueNAS
+  Dockerfile             # Single image (root level)
   secret-paths.yml       # SSM paths for compose environment variables
+  backend/               # Rust Lambda (if any)
   infrastructure/
     terraform/
   platform.yml
@@ -31,24 +31,65 @@ The shared reusable workflow handles steps 2-3 automatically when `truenas: true
   CLAUDE.md
 ```
 
-Key difference from standard projects: `compose.yaml` and `Dockerfile` live at the repo root.
+### Multi-image project (e.g., airwave)
+
+```
+<project>/
+  compose.yaml           # References both images
+  api/                   # Backend service
+    Dockerfile
+    ...
+  web/                   # Frontend service
+    Dockerfile
+    ...
+  secret-paths.yml
+  backend/               # Rust code (for lint/test, not Docker)
+  frontend/              # TypeScript code (for lint/test, not Docker)
+  infrastructure/
+    terraform/
+  platform.yml
+  Makefile
+  CLAUDE.md
+```
+
+Each component directory has its own `Dockerfile`. The directory name is the component name used in the image path.
 
 ---
 
 ## platform.yml
 
+### Single image
+
 ```yaml
 project: <name>
 prefix: <name>
 stack:
-  - rust          # If project has a Lambda
+  - rust
   - terraform
-truenas: true     # Enables Docker + Komodo deploy
+truenas: true
 ```
 
+Builds from root → `ghcr.io/chris-arsenault/<project>:<sha>`
+
+### Multi-image
+
+```yaml
+project: <name>
+prefix: <name>
+stack:
+  - rust
+  - typescript
+truenas: true
+images:
+  - api
+  - web
+```
+
+Builds each component from its directory → `ghcr.io/chris-arsenault/<project>/<component>:<sha>`
+
 The `truenas: true` flag tells the shared workflow to:
-1. Build a Docker image tagged `ghcr.io/chris-arsenault/<project>:<sha>`
-2. Push to GHCR
+1. Build Docker image(s) — single from root, or one per entry in `images`
+2. Push to GHCR at `ghcr.io/chris-arsenault/<project>[/<component>]:<sha>`
 3. Read `secret-paths.yml` for Komodo environment variables
 4. Call the `deploy-truenas` action with stack name = project name
 
@@ -70,7 +111,9 @@ The `deploy-truenas` action reads this file, resolves the SSM values via the Kom
 
 ## compose.yaml
 
-Standard Docker Compose with `${VAR}` references to environment variables set by Komodo:
+Standard Docker Compose with `${VAR}` references to environment variables set by Komodo.
+
+### Single image
 
 ```yaml
 services:
@@ -81,7 +124,6 @@ services:
       - "<host-port>:8080"
     environment:
       DB_USER: "${DB_USER}"
-      DB_PASSWORD: "${DB_PASSWORD}"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
       interval: 15s
@@ -90,7 +132,31 @@ services:
       start_period: 60s
 ```
 
-`IMAGE_TAG` is set automatically by the deploy action to the git SHA.
+### Multi-image
+
+```yaml
+services:
+  api:
+    image: ghcr.io/chris-arsenault/<project>/api:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      DB_USER: "${DB_USER}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  web:
+    image: ghcr.io/chris-arsenault/<project>/web:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+```
+
+`IMAGE_TAG` is set automatically by the deploy action to the git SHA. All images in the stack share the same tag.
 
 ---
 

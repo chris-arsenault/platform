@@ -62,9 +62,14 @@ stack:                   # Declares which lint/build/deploy steps to run
   - terraform            # terraform fmt, terraform apply
 migrations: db/migrations  # Optional — enables run-migrations step
 truenas: true            # Optional — enables Docker + Komodo deploy
+images:                  # Optional — multi-image TrueNAS deploy
+  - api                  # Builds api/Dockerfile → ghcr.io/.../project/api:sha
+  - web                  # Builds web/Dockerfile → ghcr.io/.../project/web:sha
 ```
 
 Only include stack components your project actually has. The shared workflow skips steps for missing components.
+
+When `truenas: true` without `images`, a single image is built from the repo root. When `images` is present, each entry is a component directory containing its own `Dockerfile`, pushed to `ghcr.io/chris-arsenault/{project}/{component}:{sha}`. See [TRUENAS-DEPLOY.md](TRUENAS-DEPLOY.md) for full details.
 
 ---
 
