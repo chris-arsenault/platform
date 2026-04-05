@@ -36,15 +36,15 @@ The shared reusable workflow handles steps 2-3 automatically when `truenas: true
 ```
 <project>/
   compose.yaml           # References both images
-  api/                   # Backend service
+  backend/               # Rust source + Dockerfile
     Dockerfile
-    ...
-  web/                   # Frontend service
+    Cargo.toml
+    src/
+  frontend/              # TypeScript source + Dockerfile
     Dockerfile
-    ...
+    package.json
+    src/
   secret-paths.yml
-  backend/               # Rust code (for lint/test, not Docker)
-  frontend/              # TypeScript code (for lint/test, not Docker)
   infrastructure/
     terraform/
   platform.yml
@@ -53,6 +53,35 @@ The shared reusable workflow handles steps 2-3 automatically when `truenas: true
 ```
 
 Each component directory has its own `Dockerfile`. The directory name is the component name used in the image path.
+
+---
+
+## Dockerfiles must not compile
+
+The shared workflow compiles Rust (`cargo clippy --release`) and builds frontends (`pnpm run build`) before the Docker step. Dockerfiles must COPY pre-built artifacts from the CI workspace — **not** compile from source.
+
+**Rust backend Dockerfile:**
+
+```dockerfile
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY target/release/<binary> /usr/local/bin/<binary>
+CMD ["<binary>"]
+```
+
+**Frontend Dockerfile:**
+
+```dockerfile
+FROM nginx:alpine
+COPY dist/ /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+```
+
+This is possible because the Docker build runs on the same CI runner that just compiled everything. The build artifacts (`target/release/`, `dist/`) are already present. Docker just packages them.
+
+**Do NOT use multi-stage builds that compile from source.** That duplicates the compilation the shared workflow already performed, adding minutes to every build. The Dockerfile is a packaging step, not a build step.
+
+Note: the Rust binary is compiled for linux-amd64 (GitHub runner architecture), which must match the target container's architecture.
 
 ---
 
