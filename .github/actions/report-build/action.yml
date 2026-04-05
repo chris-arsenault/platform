@@ -1,23 +1,10 @@
 name: Report Build
-description: Send build results to the platform CI dashboard. Requires AWS credentials (OIDC role) to be configured.
+description: |
+  Send build results to the platform CI dashboard. Auto-detects lint/test
+  outcomes from step names and computes duration from the GitHub API.
 
-inputs:
-  status:
-    description: Job status (success/failure/cancelled)
-    required: false
-    default: ${{ job.status }}
-  lint-passed:
-    description: Whether lint passed (true/false/empty)
-    required: false
-    default: ""
-  test-passed:
-    description: Whether tests passed (true/false/empty)
-    required: false
-    default: ""
-  duration-seconds:
-    description: Build duration in seconds
-    required: false
-    default: ""
+  Convention: name lint steps starting with "Lint" and test steps starting
+  with "Test". The action queries the workflow jobs API to find them.
 
 runs:
   using: composite
@@ -26,29 +13,84 @@ runs:
         WEBHOOK_URL=$(aws ssm get-parameter --name /platform/ci/url --query Parameter.Value --output text --region us-east-1)
         TOKEN=$(aws ssm get-parameter --name /platform/ci/ingest-token --with-decryption --query Parameter.Value --output text --region us-east-1)
 
-        BODY=$(cat <<'ENDJSON'
-        {
-          "repo": "${{ github.repository }}",
-          "workflow": "${{ github.workflow }}",
-          "status": "${{ inputs.status }}",
-          "branch": "${{ github.ref_name }}",
-          "commit_sha": "${{ github.sha }}",
-          "run_id": "${{ github.run_id }}",
-          "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        }
-        ENDJSON
-        )
+        BODY=$(python3 -c "
+        import json, os, urllib.request, sys
+        from datetime import datetime, timezone
 
-        BODY=$(echo "$BODY" | python3 -c "
-        import sys, json
-        d = json.load(sys.stdin)
-        dur = '${{ inputs.duration-seconds }}'
-        lint = '${{ inputs.lint-passed }}'
-        test = '${{ inputs.test-passed }}'
-        if dur: d['duration_seconds'] = int(dur)
-        if lint: d['lint_passed'] = lint == 'true'
-        if test: d['test_passed'] = test == 'true'
-        print(json.dumps(d))
+        token = os.environ.get('GITHUB_TOKEN', '')
+        api = os.environ.get('GITHUB_API_URL', 'https://api.github.com')
+        repo = os.environ.get('GITHUB_REPOSITORY', '')
+        run_id = os.environ.get('GITHUB_RUN_ID', '')
+
+        # Query jobs API
+        lint_results = []
+        test_results = []
+        earliest_start = None
+        latest_end = None
+        overall_status = 'success'
+
+        try:
+            url = f'{api}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100'
+            req = urllib.request.Request(url, headers={
+                'Authorization': f'token {token}',
+                'Accept': 'application/vnd.github+json',
+            })
+            data = json.loads(urllib.request.urlopen(req).read())
+
+            for job in data.get('jobs', []):
+                # Skip the report job itself
+                name = job.get('name', '').lower()
+                if 'report' in name:
+                    continue
+
+                # Track overall status
+                conclusion = job.get('conclusion', '')
+                if conclusion in ('failure', 'cancelled'):
+                    overall_status = conclusion
+
+                # Track timing
+                started = job.get('started_at')
+                ended = job.get('completed_at')
+                if started:
+                    t = datetime.fromisoformat(started.replace('Z', '+00:00'))
+                    if earliest_start is None or t < earliest_start:
+                        earliest_start = t
+                if ended:
+                    t = datetime.fromisoformat(ended.replace('Z', '+00:00'))
+                    if latest_end is None or t > latest_end:
+                        latest_end = t
+
+                # Check step names
+                for step in job.get('steps', []):
+                    sname = step.get('name', '')
+                    sconclusion = step.get('conclusion', 'skipped')
+                    if sname.startswith('Lint'):
+                        lint_results.append(sconclusion == 'success')
+                    elif sname.startswith('Test'):
+                        test_results.append(sconclusion == 'success')
+
+        except Exception as e:
+            print(f'Warning: GitHub API query failed: {e}', file=sys.stderr)
+
+        # Build report
+        report = {
+            'repo': os.environ.get('GITHUB_REPOSITORY', ''),
+            'workflow': os.environ.get('GITHUB_WORKFLOW', ''),
+            'status': overall_status,
+            'branch': os.environ.get('GITHUB_REF_NAME', ''),
+            'commit_sha': os.environ.get('GITHUB_SHA', ''),
+            'run_id': run_id,
+            'run_url': f'{os.environ.get(\"GITHUB_SERVER_URL\", \"\")}/{repo}/actions/runs/{run_id}',
+        }
+
+        if lint_results:
+            report['lint_passed'] = all(lint_results)
+        if test_results:
+            report['test_passed'] = all(test_results)
+        if earliest_start and latest_end:
+            report['duration_seconds'] = int((latest_end - earliest_start).total_seconds())
+
+        print(json.dumps(report))
         ")
 
         curl -sf -X POST "${WEBHOOK_URL}/api/ci/report" \
