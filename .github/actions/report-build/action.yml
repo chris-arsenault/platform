@@ -10,10 +10,12 @@ runs:
   using: composite
   steps:
     - run: |
+        set -euo pipefail
+
         WEBHOOK_URL=$(aws ssm get-parameter --name /platform/ci/url --query Parameter.Value --output text --region us-east-1)
         TOKEN=$(aws ssm get-parameter --name /platform/ci/ingest-token --with-decryption --query Parameter.Value --output text --region us-east-1)
 
-        BODY=$(python3 -c "
+        BODY=$(python3 << 'PYEOF'
         import json, os, urllib.request, sys
         from datetime import datetime, timezone
 
@@ -29,48 +31,44 @@ runs:
         latest_end = None
         overall_status = 'success'
 
-        try:
-            url = f'{api}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100'
-            req = urllib.request.Request(url, headers={
-                'Authorization': f'token {token}',
-                'Accept': 'application/vnd.github+json',
-            })
-            data = json.loads(urllib.request.urlopen(req).read())
+        url = f'{api}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100'
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'token {token}',
+            'Accept': 'application/vnd.github+json',
+        })
+        data = json.loads(urllib.request.urlopen(req).read())
 
-            for job in data.get('jobs', []):
-                # Skip the report job itself
-                name = job.get('name', '').lower()
-                if 'report' in name:
-                    continue
+        for job in data.get('jobs', []):
+            # Skip the report job itself
+            name = job.get('name', '').lower()
+            if 'report' in name:
+                continue
 
-                # Track overall status
-                conclusion = job.get('conclusion', '')
-                if conclusion in ('failure', 'cancelled'):
-                    overall_status = conclusion
+            # Track overall status
+            conclusion = job.get('conclusion', '')
+            if conclusion in ('failure', 'cancelled'):
+                overall_status = conclusion
 
-                # Track timing
-                started = job.get('started_at')
-                ended = job.get('completed_at')
-                if started:
-                    t = datetime.fromisoformat(started.replace('Z', '+00:00'))
-                    if earliest_start is None or t < earliest_start:
-                        earliest_start = t
-                if ended:
-                    t = datetime.fromisoformat(ended.replace('Z', '+00:00'))
-                    if latest_end is None or t > latest_end:
-                        latest_end = t
+            # Track timing
+            started = job.get('started_at')
+            ended = job.get('completed_at')
+            if started:
+                t = datetime.fromisoformat(started.replace('Z', '+00:00'))
+                if earliest_start is None or t < earliest_start:
+                    earliest_start = t
+            if ended:
+                t = datetime.fromisoformat(ended.replace('Z', '+00:00'))
+                if latest_end is None or t > latest_end:
+                    latest_end = t
 
-                # Check step names
-                for step in job.get('steps', []):
-                    sname = step.get('name', '')
-                    sconclusion = step.get('conclusion', 'skipped')
-                    if sname.startswith('Lint'):
-                        lint_results.append(sconclusion == 'success')
-                    elif sname.startswith('Test'):
-                        test_results.append(sconclusion == 'success')
-
-        except Exception as e:
-            print(f'Warning: GitHub API query failed: {e}', file=sys.stderr)
+            # Check step names
+            for step in job.get('steps', []):
+                sname = step.get('name', '')
+                sconclusion = step.get('conclusion', 'skipped')
+                if sname.startswith('Lint'):
+                    lint_results.append(sconclusion == 'success')
+                elif sname.startswith('Test'):
+                    test_results.append(sconclusion == 'success')
 
         # Build report
         report = {
@@ -80,7 +78,7 @@ runs:
             'branch': os.environ.get('GITHUB_REF_NAME', ''),
             'commit_sha': os.environ.get('GITHUB_SHA', ''),
             'run_id': run_id,
-            'run_url': f'{os.environ.get(\"GITHUB_SERVER_URL\", \"\")}/{repo}/actions/runs/{run_id}',
+            'run_url': f'{os.environ.get("GITHUB_SERVER_URL", "")}/{repo}/actions/runs/{run_id}',
         }
 
         if lint_results:
@@ -91,10 +89,13 @@ runs:
             report['duration_seconds'] = int((latest_end - earliest_start).total_seconds())
 
         print(json.dumps(report))
-        ")
+        PYEOF
+        )
 
         curl -sf -X POST "${WEBHOOK_URL}/api/ci/report" \
           -H "Content-Type: application/json" \
           -H "Authorization: Bearer ${TOKEN}" \
-          -d "$BODY" || echo "::warning::Failed to report build status"
+          -d "$BODY"
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       shell: bash
