@@ -78,9 +78,13 @@ jobs:
 
       - name: Install Rust tools
         if: steps.config.outputs.has_rust == 'true'
+        run: pip3 install cargo-lambda ziglang
+
+      - name: Install cargo-llvm-cov
+        if: steps.config.outputs.has_rust == 'true'
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-lambda,cargo-llvm-cov
+          tool: cargo-llvm-cov
 
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
