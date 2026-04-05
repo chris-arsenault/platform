@@ -1,0 +1,16 @@
+name: SonarQube Scan (.NET) — End
+description: |
+  Finalize and upload .NET analysis to SonarQube. Call AFTER dotnet build/test.
+  Pair with sonar-scan-dotnet-begin BEFORE build/test.
+
+inputs:
+  token:
+    description: SonarQube token (from sonar-scan-dotnet-begin outputs)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: SonarQube End
+      run: dotnet-sonarscanner end /d:sonar.token="${{ inputs.token }}"
+      shell: bash

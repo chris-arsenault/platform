@@ -1,0 +1,57 @@
+name: SonarQube Scan (.NET) — Begin
+description: |
+  Install dotnet-sonarscanner and start analysis. Call this BEFORE dotnet build/test.
+  Pair with sonar-scan-dotnet-end AFTER build/test completes.
+  Requires AWS credentials (OIDC role) for SSM token retrieval.
+
+inputs:
+  project-key:
+    description: SonarQube project key (typically the repo name)
+    required: true
+  exclusions:
+    description: Comma-separated glob patterns to exclude
+    required: false
+    default: ""
+  extra-args:
+    description: Additional sonar-scanner arguments
+    required: false
+    default: ""
+
+outputs:
+  token:
+    description: SonarQube token (masked, for sonar-scan-dotnet-end)
+    value: ${{ steps.token.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Get SonarQube token from SSM
+      id: token
+      run: |
+        set -euo pipefail
+        REGION="us-east-1"
+
+        TOKEN=$(aws ssm get-parameter --name /platform/sonarqube/ci-token \
+          --with-decryption --query Parameter.Value --output text --region "${REGION}")
+        echo "::add-mask::${TOKEN}"
+        echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+
+        URL=$(aws ssm get-parameter --name /platform/sonarqube/url \
+          --query Parameter.Value --output text --region "${REGION}")
+        echo "url=${URL}" >> "$GITHUB_OUTPUT"
+      shell: bash
+
+    - name: Install SonarScanner for .NET
+      run: dotnet tool install --global dotnet-sonarscanner
+      shell: bash
+
+    - name: SonarQube Begin
+      run: |
+        dotnet-sonarscanner begin \
+          /k:"${{ inputs.project-key }}" \
+          /d:sonar.host.url="${{ steps.token.outputs.url }}" \
+          /d:sonar.token="${{ steps.token.outputs.token }}" \
+          /d:sonar.exclusions="${{ inputs.exclusions }}" \
+          /d:sonar.cs.opencover.reportPaths="**/TestResults/*/coverage.opencover.xml" \
+          ${{ inputs.extra-args }}
+      shell: bash
