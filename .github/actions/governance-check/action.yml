@@ -35,6 +35,19 @@ runs:
             print(f"::error::{config_path} must declare a 'stack' list (e.g. rust, typescript, terraform)")
             sys.exit(1)
 
+        # If the workflow calls the shared reusable workflow, all lint/test
+        # steps are guaranteed — skip step-level checks.
+        uses_shared = False
+        for job_name, job in workflow.get("jobs", {}).items():
+            uses = job.get("uses", "")
+            if "platform/.github/workflows/ci.yml" in uses:
+                uses_shared = True
+                break
+
+        if uses_shared:
+            print(f"Governance passed: stack={sorted(stack)}, using shared reusable workflow")
+            sys.exit(0)
+
         # Collect all step names across all jobs
         step_names = []
         for job_name, job in workflow.get("jobs", {}).items():
