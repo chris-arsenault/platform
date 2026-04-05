@@ -82,17 +82,6 @@ jobs:
         with:
           tool: cargo-lambda,cargo-llvm-cov
 
-      - name: Setup coverage environment
-        if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
-        run: |
-          cargo llvm-cov show-env --export-prefix | while IFS= read -r line; do
-            # Convert "export KEY=VALUE" to "KEY=VALUE" for GITHUB_ENV
-            echo "${line#export }" >> "$GITHUB_ENV"
-          done
-          eval "$(cargo llvm-cov show-env --export-prefix)"
-          cargo llvm-cov clean --workspace
-
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
@@ -101,12 +90,13 @@ jobs:
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
-        run: cargo test --release --lib
-
-      - name: Generate coverage report
-        if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
-        run: cargo llvm-cov report --release --lcov --output-path coverage/lcov.info
+        run: |
+          set -euo pipefail
+          eval "$(cargo llvm-cov show-env --export-prefix)"
+          cargo llvm-cov clean --workspace
+          cargo test --release --lib
+          mkdir -p coverage
+          cargo llvm-cov report --release --lcov --output-path coverage/lcov.info
 
       # ── TypeScript ──────────────────────────────────────────
 
