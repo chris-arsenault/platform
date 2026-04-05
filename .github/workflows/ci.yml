@@ -16,6 +16,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   ci:
@@ -48,6 +49,13 @@ jobs:
               f.write(f"has_terraform={'true' if 'terraform' in stack else 'false'}\n")
               f.write(f"has_migrations={'true' if cfg.get('migrations') else 'false'}\n")
               f.write(f"migrations_dir={cfg.get('migrations', '')}\n")
+              truenas = cfg.get('truenas', {})
+              f.write(f"has_truenas={'true' if truenas else 'false'}\n")
+              if truenas:
+                  f.write(f"truenas_stack={truenas.get('stack', cfg['project'])}\n")
+                  f.write(f"truenas_compose={truenas.get('compose', 'compose.yaml')}\n")
+                  f.write(f"truenas_docker_context={truenas.get('docker-context', '.')}\n")
+                  f.write(f"truenas_image={truenas.get('image', cfg['project'])}\n")
           PYEOF
         shell: bash
 
@@ -224,6 +232,51 @@ jobs:
             -backend-config="region=us-east-1" \
             -backend-config="use_lockfile=true"
           terraform -chdir=infrastructure/terraform apply -auto-approve
+
+      # ── TrueNAS deploy (Docker + Komodo) ────────────────────
+
+      - name: Build Docker image
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
+        run: |
+          docker build \
+            -t ghcr.io/chris-arsenault/${{ steps.config.outputs.truenas_image }}:${{ github.sha }} \
+            -t ghcr.io/chris-arsenault/${{ steps.config.outputs.truenas_image }}:latest \
+            ${{ steps.config.outputs.truenas_docker_context }}
+
+      - name: Push to GHCR
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker push ghcr.io/chris-arsenault/${{ steps.config.outputs.truenas_image }}:${{ github.sha }}
+          docker push ghcr.io/chris-arsenault/${{ steps.config.outputs.truenas_image }}:latest
+
+      - name: Read TrueNAS secrets
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
+        id: truenas_secrets
+        run: |
+          set -euo pipefail
+          if [ -f "secret-paths.yml" ]; then
+            SECRETS=$(python3 -c "
+          import yaml
+          with open('secret-paths.yml') as f:
+              paths = yaml.safe_load(f)
+          for k, v in paths.items():
+              print(f'{k}={v}')
+          ")
+            echo "secrets<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$SECRETS" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
+      - uses: chris-arsenault/platform/.github/actions/deploy-truenas@main
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
+        with:
+          stack-name: ${{ steps.config.outputs.truenas_stack }}
+          repo: ${{ github.repository }}
+          compose-path: ${{ steps.config.outputs.truenas_compose }}
+          image-tag: ${{ github.sha }}
+          secrets: ${{ steps.truenas_secrets.outputs.secrets }}
 
   report:
     if: always()
