@@ -1,0 +1,83 @@
+name: Governance Check
+description: |
+  Validates that the CI workflow contains required steps based on the
+  project's declared stack in platform.yml. Fails fast if steps are missing.
+
+  Run this as the FIRST step in the CI job, after checkout.
+
+runs:
+  using: composite
+  steps:
+    - run: |
+        set -euo pipefail
+        python3 << 'PYEOF'
+        import yaml, sys, os
+
+        config_path = "platform.yml"
+        workflow_path = ".github/workflows/ci.yml"
+
+        if not os.path.exists(config_path):
+            print(f"::error::Missing {config_path} — every platform project must declare its stack")
+            sys.exit(1)
+
+        if not os.path.exists(workflow_path):
+            print(f"::error::Missing {workflow_path}")
+            sys.exit(1)
+
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        with open(workflow_path) as f:
+            workflow = yaml.safe_load(f)
+
+        stack = set(config.get("stack", []))
+        if not stack:
+            print(f"::error::{config_path} must declare a 'stack' list (e.g. rust, typescript, terraform)")
+            sys.exit(1)
+
+        # Collect all step names across all jobs
+        step_names = []
+        for job_name, job in workflow.get("jobs", {}).items():
+            for step in job.get("steps", []):
+                name = step.get("name", "")
+                if name:
+                    step_names.append(name)
+
+        # Define required steps per stack component.
+        # Each entry is (description, list of prefixes where at least one must match).
+        requirements = {
+            "rust": [
+                ("clippy", ["Lint clippy"]),
+                ("format check", ["Lint rustfmt"]),
+            ],
+            "typescript": [
+                ("lint", ["Lint eslint", "Lint frontend"]),
+                ("typecheck", ["Lint typecheck"]),
+            ],
+            "python": [
+                ("lint", ["Lint ruff", "Lint backend"]),
+            ],
+            "dotnet": [
+                ("test", ["Test"]),
+            ],
+            "terraform": [
+                ("format check", ["Lint terraform"]),
+            ],
+        }
+
+        errors = []
+        for component in sorted(stack):
+            for desc, prefixes in requirements.get(component, []):
+                if not any(s.startswith(p) for s in step_names for p in prefixes):
+                    errors.append(f"stack '{component}' requires {desc} (step starting with {' or '.join(repr(p) for p in prefixes)})")
+
+        if errors:
+            for e in errors:
+                print(f"::error::{e}")
+            print(f"\nGovernance failed: {len(errors)} missing step(s).")
+            print("Add the required steps to .github/workflows/ci.yml or update platform.yml.")
+            sys.exit(1)
+
+        print(f"Governance passed: stack={sorted(stack)}, {len(step_names)} steps checked")
+        PYEOF
+      shell: bash
