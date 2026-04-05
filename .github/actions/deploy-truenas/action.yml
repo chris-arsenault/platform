@@ -6,7 +6,7 @@ inputs:
     description: Komodo stack name
     required: true
   repo:
-    description: GitHub repo in owner/repo format (e.g. chris-arsenault/truenas)
+    description: GitHub repo in owner/repo format (e.g. chris-arsenault/nas-sonarqube)
     required: true
   compose-path:
     description: Path to compose file within the repo

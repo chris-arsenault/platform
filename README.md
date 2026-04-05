@@ -9,7 +9,7 @@ Index repo for the platform layer — shared AWS infrastructure, identity, deplo
 | [platform-control](https://github.com/chris-arsenault/platform-control) | IAM deployer roles, OIDC, shared state bucket, GitHub secrets | `~/src/platform-control` |
 | [platform-services](https://github.com/chris-arsenault/platform-services) | Cognito, auth-trigger, shared RDS, database migrations, CI dashboard, observability | `~/src/platform-services` |
 | [platform-network](https://github.com/chris-arsenault/platform-network) | VPC, subnets, shared ALB, WireGuard VPN, NAT, DNS | `~/src/platform-network` |
-| [truenas](https://github.com/chris-arsenault/truenas) | TrueNAS server IaC, Docker Compose stacks (SonarQube) | `~/src/truenas` |
+| [nas-sonarqube](https://github.com/chris-arsenault/nas-sonarqube) | SonarQube on TrueNAS — Docker Compose, CI token Lambda | `~/src/nas-sonarqube` |
 
 ## Deploy Order
 
@@ -28,9 +28,11 @@ Deploy all: `scripts/deploy-all.sh`
 ## This Repo Also Contains
 
 - `INTEGRATION.md` — canonical instructions for AI agents integrating projects with the platform
-- `.github/actions/report-build/` — composite GitHub Action for CI dashboard reporting
+- `CI-WORKFLOW.md` — shared reusable CI/CD workflow, platform.yml, governance, SonarQube
+- `TRUENAS-DEPLOY.md` — TrueNAS deploy pattern (Docker, Komodo, secret-paths.yml)
+- `.github/workflows/ci.yml` — shared reusable CI/CD workflow (called by all standard projects)
+- `.github/actions/` — `sonar-scan`, `report-build`, `governance-check`, `run-migrations`, `deploy-truenas`
 - `scripts/deploy-all.sh` — deploys all platform repos in order
-- `scripts/migrate-state.sh` — one-time migration from per-project state buckets to shared bucket
 
 ## Integration
 
