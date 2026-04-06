@@ -70,6 +70,7 @@ jobs:
             backend/target
           key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
+          save-always: true
 
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
@@ -116,6 +117,7 @@ jobs:
           path: ~/.local/share/pnpm/store/v10
           key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
           restore-keys: pnpm-
+          save-always: true
 
       - name: Install frontend deps
         if: steps.config.outputs.has_typescript == 'true'
