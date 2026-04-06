@@ -72,11 +72,12 @@ jobs:
 
       - name: Cache Rust (clippy)
         if: steps.config.outputs.has_rust == 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          workspaces: backend -> target-clippy
-          prefix-key: clippy
-          cache-on-failure: true
+          path: backend/target-clippy
+          key: rust-clippy-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-clippy-
+          save-always: true
 
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
@@ -85,11 +86,12 @@ jobs:
 
       - name: Cache Rust (test)
         if: steps.config.outputs.has_rust == 'true'
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          workspaces: backend -> target-cov
-          prefix-key: test
-          cache-on-failure: true
+          path: backend/target-cov
+          key: rust-cov-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-cov-
+          save-always: true
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
@@ -99,12 +101,24 @@ jobs:
           CARGO_TARGET_DIR=target-cov cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
 
       - name: Cache Rust (build)
-        if: steps.config.outputs.has_rust == 'true' && inputs.deploy && github.ref == 'refs/heads/main'
-        uses: Swatinem/rust-cache@v2
+        if: steps.config.outputs.has_rust == 'true'
+        uses: actions/cache@v4
         with:
-          workspaces: backend -> target
-          prefix-key: build
-          cache-on-failure: true
+          path: backend/target
+          key: rust-build-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-build-
+          save-always: true
+
+      - name: Cache cargo registry
+        if: steps.config.outputs.has_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-registry-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: cargo-registry-
+          save-always: true
 
       # ── TypeScript ──────────────────────────────────────────
 
