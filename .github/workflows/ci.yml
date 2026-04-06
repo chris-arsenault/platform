@@ -263,7 +263,12 @@ jobs:
       - name: Build backend (TrueNAS)
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas == 'true'
         working-directory: ${{ steps.config.outputs.rust_dir }}
-        run: cargo build --release
+        run: |
+          cargo build --release
+          mkdir -p dist
+          for f in target/release/*; do
+            [ -f "$f" ] && [ -x "$f" ] && [[ "$(basename "$f")" != *.* ]] && cp "$f" dist/
+          done
 
       - name: Build frontend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'

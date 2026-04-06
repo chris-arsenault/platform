@@ -60,16 +60,14 @@ Each component directory has its own `Dockerfile`. The directory name is the com
 
 The shared workflow compiles Rust and builds frontends before the Docker step. Dockerfiles must COPY pre-built artifacts from the CI workspace — **not** compile from source.
 
-The shared workflow uses separate target dirs for lint (`target-clippy/`) and test (`target-cov/`), but the deploy build step writes to the default `target/`. Dockerfiles reference the default `target/` dir.
-
-For TrueNAS projects without a Lambda, the shared workflow does not currently run a plain `cargo build`. Add a `cargo build --release` to the deploy section of your project, or use the `scripts/build-lambda.sh` pattern to produce the binary in `target/release/`.
+The shared workflow builds the backend and copies the release binary into `dist/` inside the component directory. The frontend `pnpm run build` also outputs to `dist/`. Dockerfiles COPY from `dist/` — a clean directory with only deployable artifacts, unaffected by `.dockerignore` patterns on `target/`.
 
 **Rust backend Dockerfile:**
 
 ```dockerfile
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY target/release/<binary> /usr/local/bin/<binary>
+COPY dist/<binary> /usr/local/bin/<binary>
 CMD ["<binary>"]
 ```
 
@@ -81,9 +79,7 @@ COPY dist/ /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
 ```
 
-The Docker build runs on the same CI runner that just compiled everything. The artifacts are already present — Docker just packages them.
-
-**Do NOT use multi-stage builds that compile from source.** That duplicates the compilation the shared workflow already performed, adding minutes to every build. The Dockerfile is a packaging step, not a build step.
+**Do NOT use multi-stage builds that compile from source.** The shared workflow already compiled everything. The Dockerfile is a packaging step, not a build step.
 
 Note: the Rust binary is compiled for linux-amd64 (GitHub runner architecture), which must match the target container's architecture.
 
