@@ -31,11 +31,11 @@ This is the **entire CI workflow file** for standard projects. The shared workfl
 ### What the shared workflow does
 
 1. **Governance check** — validates that required lint/test steps exist (auto-passes when using the shared workflow)
-2. **Rust lint** — `cargo clippy`, `cargo fmt --check` in `backend/`
-3. **TypeScript lint** — `pnpm install`, `eslint`, `tsc --noEmit` in `frontend/`
-4. **Python lint** — `uv sync`, `ruff check`, `ruff format --check` in `backend/`
+2. **Rust lint + test** — `cargo clippy`, `cargo fmt --check`, `cargo test` with coverage (auto-detected from `Cargo.toml` location)
+3. **TypeScript lint + test** — `pnpm install`, `eslint`, `tsc --noEmit`, `vitest` with coverage (auto-detected from `package.json` location)
+4. **Python lint** — `uv sync`, `ruff check`, `ruff format --check` (auto-detected from `Cargo.toml` sibling)
 5. **Terraform lint** — `terraform fmt -check -recursive` in `infrastructure/terraform/`
-6. **SonarQube scan** — auto-configured from stack (sources, exclusions, AWS provider version)
+6. **SonarQube scan** — auto-configured sources, exclusions, and coverage report paths from stack
 7. **Deploy (main only)** — cargo-lambda build, pnpm build, migrations, terraform apply
 8. **TrueNAS deploy (if configured)** — Docker build, GHCR push, Komodo deploy
 9. **Report** — auto-detects lint/test outcomes and duration via GitHub API
@@ -75,12 +75,19 @@ When `truenas: true` without `images`, a single image is built from the repo roo
 
 ## Standard Project Layout
 
-The shared workflow expects this directory structure:
+The shared workflow auto-detects source directories from the filesystem:
+
+- **Rust**: finds the shallowest `Cargo.toml` (typically `backend/`)
+- **TypeScript**: finds the shallowest `package.json` outside `node_modules` and backend dirs (typically `frontend/`)
+- **Python**: uses the same directory as Rust
+- **Terraform**: always `infrastructure/terraform/`
+
+Typical layout:
 
 ```
 <project>/
   backend/               # Rust workspace OR Python package
-    Cargo.toml           # (Rust)
+    Cargo.toml
     src/
   frontend/              # TypeScript/React SPA
     package.json
@@ -95,10 +102,10 @@ The shared workflow expects this directory structure:
   .github/workflows/ci.yml
 ```
 
-**Conventions:**
-- Rust backends live in `backend/` (not `apps/` or `src/`)
-- TypeScript frontends live in `frontend/` (pnpm, not npm)
-- Terraform lives in `infrastructure/terraform/`
+Directory names are not hardcoded — the workflow finds `Cargo.toml` and `package.json` wherever they live. The convention of `backend/` and `frontend/` is recommended but not required.
+
+**Other conventions:**
+- TypeScript uses pnpm (not npm)
 - The `Makefile` has a `ci` target that mirrors the shared workflow's lint/test steps
 
 ---
