@@ -55,6 +55,19 @@ jobs:
 
       # ── Rust ────────────────────────────────────────────────
 
+      - name: Restore Rust caches
+        if: steps.config.outputs.has_rust == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target-clippy
+            backend/target-cov
+            backend/target
+          key: rust-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: rust-
+
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
@@ -70,28 +83,10 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: Cache Rust (clippy)
-        if: steps.config.outputs.has_rust == 'true'
-        uses: actions/cache@v4
-        with:
-          path: backend/target-clippy
-          key: rust-clippy-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-clippy-
-          save-always: true
-
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: CARGO_TARGET_DIR=target-clippy cargo clippy --release -- -D warnings
-
-      - name: Cache Rust (test)
-        if: steps.config.outputs.has_rust == 'true'
-        uses: actions/cache@v4
-        with:
-          path: backend/target-cov
-          key: rust-cov-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-cov-
-          save-always: true
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
@@ -100,25 +95,17 @@ jobs:
           mkdir -p coverage
           CARGO_TARGET_DIR=target-cov cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
 
-      - name: Cache Rust (build)
-        if: steps.config.outputs.has_rust == 'true'
-        uses: actions/cache@v4
-        with:
-          path: backend/target
-          key: rust-build-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-build-
-          save-always: true
-
-      - name: Cache cargo registry
-        if: steps.config.outputs.has_rust == 'true'
-        uses: actions/cache@v4
+      - name: Save Rust caches
+        if: steps.config.outputs.has_rust == 'true' && always()
+        uses: actions/cache/save@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: cargo-registry-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: cargo-registry-
-          save-always: true
+            backend/target-clippy
+            backend/target-cov
+            backend/target
+          key: rust-${{ hashFiles('backend/Cargo.lock') }}
 
       # ── TypeScript ──────────────────────────────────────────
 
