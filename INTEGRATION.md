@@ -215,7 +215,7 @@ module "api" {
 
   lambdas = {
     api = {
-      zip    = "${path.module}/../../backend/target/lambda/api/bootstrap.zip"
+      binary = "${path.module}/../../backend/target/lambda/api/bootstrap"
       routes = [
         { priority = <unique-number>, paths = ["/api/*"], authenticated = true }
       ]
@@ -245,14 +245,14 @@ module "api" {
 
   lambdas = {
     tastings-api = {
-      zip = "../../backend/target/lambda/tastings-api/bootstrap.zip"
+      binary = "../../backend/target/lambda/tastings-api/bootstrap"
       routes = [
         { priority = 210, paths = ["/tastings", "/tastings/*"], methods = ["GET", "HEAD"], authenticated = false },
         { priority = 211, paths = ["/tastings", "/tastings/*"], authenticated = true },
       ]
     }
     recipes-api = {
-      zip = "../../backend/target/lambda/recipes-api/bootstrap.zip"
+      binary = "../../backend/target/lambda/recipes-api/bootstrap"
       routes = [
         { priority = 212, paths = ["/recipes", "/recipes/*"], methods = ["GET", "HEAD"], authenticated = false },
         { priority = 213, paths = ["/recipes", "/recipes/*"], authenticated = true },
@@ -274,32 +274,30 @@ routes = [
 
 ### Non-ALB Lambdas (Async Processing, Triggers)
 
-For Lambdas that are not HTTP-triggered (background processors, Cognito triggers), use the [`lambda`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/lambda) module directly. You can reuse the IAM role and security group from `alb-api`:
+For Lambdas that are not HTTP-triggered (background processors, Cognito triggers), use the [`lambda`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/lambda) module directly. You can reuse the IAM role from `alb-api`:
 
 ```hcl
-module "ctx" {
-  source = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/platform-context"
-}
-
 module "processing" {
-  source             = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/lambda"
-  name               = "<prefix>-processing"
-  zip                = "../../backend/target/lambda/processing/bootstrap.zip"
-  role_arn           = module.api.role_arn
-  subnet_ids         = module.ctx.private_subnet_ids
-  security_group_ids = [module.api.security_group_id]
-  environment        = { BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0" }
+  source   = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/lambda"
+  name     = "<prefix>-processing"
+  binary   = "../../backend/target/lambda/processing/bootstrap"
+  role_arn = module.api.role_arn
+  timeout  = 300
+
+  environment = { BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0" }
 }
 ```
 
+For Lambdas that need access to TrueNAS/WireGuard services, set `vpn_access = true`.
+
 ### What the module handles internally
 
-- **Lambdas**: `provided.al2023` runtime, `bootstrap` handler, `x86_64`, 256 MB, 30s timeout, VPC in private subnets
+- **Lambdas**: `provided.al2023` runtime, `bootstrap` handler, `x86_64`, 256 MB, VPC in private subnets with platform Lambda SG. Binary is zipped automatically.
 - **IAM**: Shared role with `AWSLambdaBasicExecutionRole` + `AWSLambdaVPCAccessExecutionRole` + optional inline policy via `iam_policy`
 - **ALB**: Target group, target group attachment, Lambda permission, listener rules with optional `jwt-validation`
 - **TLS**: ACM certificate with DNS validation, listener certificate attachment
 - **DNS**: Route53 A record aliased to the shared ALB
-- **Platform SSM**: All lookups (ALB, Cognito, VPC, subnets) handled internally via `platform-context`
+- **Platform discovery**: All lookups (ALB, Cognito, VPC, subnets, SGs) handled internally via `platform-context`
 
 ### Module outputs
 
@@ -309,7 +307,6 @@ module "processing" {
 | `function_arns` | Map of lambda key → function ARN |
 | `role_arn` | Shared IAM role ARN (reusable for non-ALB lambdas) |
 | `role_name` | Shared IAM role name |
-| `security_group_id` | Shared security group ID |
 | `hostname` | The configured hostname |
 
 ### Listener rule priorities
@@ -540,23 +537,47 @@ module "frontend" {
 
 The `runtime_config` map is injected as `window.__APP_CONFIG__` via a `config.js` file (served with `no-cache`). `index.html` is also `no-cache`; all other assets are `immutable` with 1-year max-age. SPA routing (404/403 → index.html) is enabled by default.
 
-### Static site (no client-side routing)
+### With dynamic OpenGraph tags
+
+Add `og_config` to deploy the platform OG server as a CloudFront origin. The OG server generates HTML with per-route meta tags for social media link previews:
 
 ```hcl
-module "site" {
+module "frontend" {
   source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
-  hostname       = "docs.<name>.ahara.io"
-  site_directory = "${path.module}/../../site/dist"
-  spa            = false
+  hostname       = "<name>.ahara.io"
+  site_directory = "${path.module}/../../frontend/dist"
+  runtime_config = { ... }
+
+  og_config = {
+    site_name = "<Name>"
+    defaults = {
+      title       = "<Name>"
+      description = "Default description"
+      image       = "/social.png"
+    }
+    routes = [
+      {
+        pattern     = "/items/:slug"
+        query       = "SELECT title, description, image_url FROM items"
+        match_field = "title"
+        title       = "{{title}}"
+        description = "{{description}}"
+        image       = "{{image_url}}"
+      }
+    ]
+    environment = { DB_HOST = "...", DB_USERNAME = "...", DB_PASSWORD = "...", DB_NAME = "..." }
+  }
 }
 ```
+
+When `og_config` is set, the module deploys the platform OG server Lambda (from S3 artifact published by platform-services), creates a function URL, and configures CloudFront with dual origins (S3 for static assets, Lambda for HTML). The SPA error fallback is replaced by the Lambda handling all HTML routes.
 
 ### Optional parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `encrypt` | `true` | KMS encryption on the S3 bucket |
-| `spa` | `true` | SPA client-side routing (404/403 → index.html) |
+| `og_config` | `null` | OpenGraph route configuration (see above) |
 
 ### Module outputs
 
@@ -566,6 +587,7 @@ module "site" {
 | `hostname` | The configured hostname |
 | `bucket_name` | S3 bucket name (for CI artifact uploads) |
 | `distribution_id` | CloudFront distribution ID |
+| `distribution_arn` | CloudFront distribution ARN |
 | `distribution_domain_name` | CloudFront domain name |
 
 ---
@@ -670,6 +692,7 @@ Use tags to discover shared infrastructure. These are resilient to resource repl
 | `nat` | `internet` | NAT instance | platform-network |
 | `reverse-proxy` | `base` | Reverse proxy base | platform-network |
 | `reverse-proxy` | `<hostname>` | Per-service proxy | platform-network |
+| `vpn-client` | `platform` | Opt-in Lambda VPN access | platform-network |
 | `wireguard` | `truenas` | VPN tunnel | platform-network |
 
 ### SSM Parameters
