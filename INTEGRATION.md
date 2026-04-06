@@ -54,7 +54,7 @@ Use this to determine which steps apply to your project.
 | 4 | ALB backend (`alb-api` module) | Your project | If project has an HTTP API |
 | 5 | Database (platform.yml, migrations, seed) | Your project + `platform-services` registration | If project uses PostgreSQL |
 | 6 | Cognito client (`cognito-app` module) | Your project | If project has a frontend with login |
-| 7 | Frontend (`spa-website` or `static-website` module) | Your project | If project has a web frontend |
+| 7 | Frontend (`website` module) | Your project | If project has a web frontend |
 | 8 | CI/CD workflow (shared workflow + platform.yml + Makefile) | Your project — see [CI-WORKFLOW.md](CI-WORKFLOW.md) | Always |
 | 9 | Required project files (README, LICENSE, CLAUDE.md, platform.yml) | Your project | Always |
 
@@ -520,13 +520,13 @@ Pass the client ID and pool ID to your frontend as runtime config (see Step 7). 
 
 Skip this step if your project has no web frontend.
 
-### SPA (React, Vue, etc.)
+Use the [`website`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/website) module. It deploys files to S3 behind CloudFront with a custom domain, ACM certificate, WAF, KMS encryption, and CloudFront invalidation on deploy.
 
-Use the [`spa-website`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/spa-website) module. It deploys built files to S3 behind CloudFront with a custom domain, ACM certificate, WAF, and SPA client-side routing (404/403 → index.html).
+### SPA (React, Vue, etc.)
 
 ```hcl
 module "frontend" {
-  source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/spa-website"
+  source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
   hostname       = "<name>.ahara.io"
   site_directory = "${path.module}/../../frontend/dist"
 
@@ -538,27 +538,27 @@ module "frontend" {
 }
 ```
 
-The `runtime_config` map is injected as `window.__APP_CONFIG__` via a `config.js` file (served with `no-cache`). `index.html` is also `no-cache`; all other assets are `immutable` with 1-year max-age.
+The `runtime_config` map is injected as `window.__APP_CONFIG__` via a `config.js` file (served with `no-cache`). `index.html` is also `no-cache`; all other assets are `immutable` with 1-year max-age. SPA routing (404/403 → index.html) is enabled by default.
 
-Optional parameters:
+### Static site (no client-side routing)
+
+```hcl
+module "site" {
+  source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
+  hostname       = "docs.<name>.ahara.io"
+  site_directory = "${path.module}/../../site/dist"
+  spa            = false
+}
+```
+
+### Optional parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `encrypt` | `true` | KMS encryption on the S3 bucket |
+| `spa` | `true` | SPA client-side routing (404/403 → index.html) |
 
-### Static site (no client-side routing)
-
-Use the [`static-website`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/static-website) module. Same pattern but with S3 versioning, uniform 1-hour cache TTL, and no SPA error fallback:
-
-```hcl
-module "site" {
-  source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/static-website"
-  hostname       = "docs.<name>.ahara.io"
-  site_directory = "${path.module}/../../site/dist"
-}
-```
-
-### Module outputs (both modules)
+### Module outputs
 
 | Output | Description |
 |--------|-------------|
