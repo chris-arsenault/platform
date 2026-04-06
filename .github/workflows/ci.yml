@@ -227,7 +227,7 @@ jobs:
           extra=""
           if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
             sources="${sources:+$sources,}${{ steps.config.outputs.rust_dir }}"
-            exclusions="${exclusions},**/target/**"
+            exclusions="${exclusions},**/target/**,**/target-clippy/**,**/target-cov/**"
           fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
             sources="${sources:+$sources,}${{ steps.config.outputs.typescript_dir }}/src"
