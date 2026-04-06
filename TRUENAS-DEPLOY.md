@@ -58,14 +58,16 @@ Each component directory has its own `Dockerfile`. The directory name is the com
 
 ## Dockerfiles must not compile
 
-The shared workflow compiles Rust (`cargo clippy --release`) and builds frontends (`pnpm run build`) before the Docker step. Dockerfiles must COPY pre-built artifacts from the CI workspace — **not** compile from source.
+The shared workflow compiles Rust and builds frontends before the Docker step. Dockerfiles must COPY pre-built artifacts from the CI workspace — **not** compile from source.
+
+The shared workflow uses separate target dirs per tool (`target-clippy/` for lint, `target-cov/` for test, `target/` for cargo-lambda). The release binary is in `target-clippy/release/<binary>` (produced by `cargo clippy --release`).
 
 **Rust backend Dockerfile:**
 
 ```dockerfile
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY target/release/<binary> /usr/local/bin/<binary>
+COPY target-clippy/release/<binary> /usr/local/bin/<binary>
 CMD ["<binary>"]
 ```
 
@@ -77,7 +79,7 @@ COPY dist/ /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
 ```
 
-This is possible because the Docker build runs on the same CI runner that just compiled everything. The build artifacts (`target/release/`, `dist/`) are already present. Docker just packages them.
+The Docker build runs on the same CI runner that just compiled everything. The artifacts are already present — Docker just packages them.
 
 **Do NOT use multi-stage builds that compile from source.** That duplicates the compilation the shared workflow already performed, adding minutes to every build. The Dockerfile is a packaging step, not a build step.
 
