@@ -84,8 +84,10 @@ jobs:
             **/target
             **/target-clippy
             **/target-cov
-          key: rust-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: rust-
+          key: rust-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-${{ hashFiles('**/Cargo.lock') }}-
+            rust-
 
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
@@ -130,8 +132,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.local/share/pnpm/store/v10
-          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: pnpm-
+          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            pnpm-
 
       - name: Install frontend deps
         if: steps.config.outputs.has_typescript == 'true'
@@ -161,7 +165,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.local/share/pnpm/store/v10
-          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
 
       # ── Python ──────────────────────────────────────────────
 
@@ -358,7 +362,7 @@ jobs:
             **/target
             **/target-clippy
             **/target-cov
-          key: rust-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
 
   report:
     if: always()
