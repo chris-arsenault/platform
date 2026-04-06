@@ -92,8 +92,8 @@ jobs:
         working-directory: ${{ steps.config.outputs.rust_dir }}
         run: cargo fmt -- --check
 
-      - name: Install Rust tools
-        if: steps.config.outputs.has_rust == 'true'
+      - name: Install cargo-lambda
+        if: steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas != 'true'
         run: pip3 install cargo-lambda ziglang
 
       - name: Install cargo-llvm-cov
