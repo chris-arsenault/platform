@@ -10,6 +10,7 @@ Index repo for the platform layer — shared AWS infrastructure, identity, deplo
 | [platform-services](https://github.com/chris-arsenault/platform-services) | Cognito, auth-trigger, shared RDS, database migrations, CI dashboard, observability | `~/src/platform-services` |
 | [platform-network](https://github.com/chris-arsenault/platform-network) | VPC, subnets, shared ALB, WireGuard VPN, NAT, DNS | `~/src/platform-network` |
 | [nas-sonarqube](https://github.com/chris-arsenault/nas-sonarqube) | SonarQube on TrueNAS — Docker Compose, CI token Lambda | `~/src/nas-sonarqube` |
+| [ahara-tf-patterns](https://github.com/chris-arsenault/ahara-tf-patterns) | Reusable Terraform modules — ALB API, SPA, static site, Cognito, Lambda | `~/src/ahara-tf-patterns` |
 
 ## Deploy Order
 
