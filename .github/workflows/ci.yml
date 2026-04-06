@@ -55,23 +55,6 @@ jobs:
 
       # ── Rust ────────────────────────────────────────────────
 
-      - name: Rust version key
-        if: steps.config.outputs.has_rust == 'true'
-        id: rust
-        run: echo "cachekey=$(rustc --version | sha256sum | head -c12)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Rust
-        if: steps.config.outputs.has_rust == 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            backend/target
-          key: rust-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('backend/Cargo.lock') }}
-          restore-keys: rust-${{ steps.rust.outputs.cachekey }}-
-          save-always: true
-
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
@@ -87,17 +70,41 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Cache Rust (clippy)
+        if: steps.config.outputs.has_rust == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend -> target-clippy
+          prefix-key: clippy
+          cache-on-failure: true
+
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
-        run: cargo clippy --release -- -D warnings
+        run: CARGO_TARGET_DIR=target-clippy cargo clippy --release -- -D warnings
+
+      - name: Cache Rust (test)
+        if: steps.config.outputs.has_rust == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend -> target-cov
+          prefix-key: test
+          cache-on-failure: true
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
         working-directory: backend
         run: |
           mkdir -p coverage
-          cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
+          CARGO_TARGET_DIR=target-cov cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
+
+      - name: Cache Rust (build)
+        if: steps.config.outputs.has_rust == 'true' && inputs.deploy && github.ref == 'refs/heads/main'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend -> target
+          prefix-key: build
+          cache-on-failure: true
 
       # ── TypeScript ──────────────────────────────────────────
 
