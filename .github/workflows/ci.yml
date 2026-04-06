@@ -114,18 +114,6 @@ jobs:
           mkdir -p coverage
           CARGO_TARGET_DIR=target-cov cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
 
-      - name: Save Rust caches
-        if: steps.config.outputs.has_rust == 'true' && always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            **/target
-            **/target-clippy
-            **/target-cov
-          key: rust-${{ hashFiles('**/Cargo.lock') }}
-
       # ── TypeScript ──────────────────────────────────────────
 
       - uses: actions/setup-node@v6
@@ -357,6 +345,20 @@ jobs:
           compose-path: compose.yaml
           image-tag: ${{ github.sha }}
           secrets: ${{ steps.truenas_secrets.outputs.secrets }}
+
+      # ── Save caches (after all build/deploy steps) ─────────
+
+      - name: Save Rust caches
+        if: steps.config.outputs.has_rust == 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            **/target
+            **/target-clippy
+            **/target-cov
+          key: rust-${{ hashFiles('**/Cargo.lock') }}
 
   report:
     if: always()
