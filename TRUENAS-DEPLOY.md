@@ -60,14 +60,16 @@ Each component directory has its own `Dockerfile`. The directory name is the com
 
 The shared workflow compiles Rust and builds frontends before the Docker step. Dockerfiles must COPY pre-built artifacts from the CI workspace — **not** compile from source.
 
-The shared workflow uses separate target dirs per tool (`target-clippy/` for lint, `target-cov/` for test, `target/` for cargo-lambda). The release binary is in `target-clippy/release/<binary>` (produced by `cargo clippy --release`).
+The shared workflow uses separate target dirs for lint (`target-clippy/`) and test (`target-cov/`), but the deploy build step writes to the default `target/`. Dockerfiles reference the default `target/` dir.
+
+For TrueNAS projects without a Lambda, the shared workflow does not currently run a plain `cargo build`. Add a `cargo build --release` to the deploy section of your project, or use the `scripts/build-lambda.sh` pattern to produce the binary in `target/release/`.
 
 **Rust backend Dockerfile:**
 
 ```dockerfile
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY target-clippy/release/<binary> /usr/local/bin/<binary>
+COPY target/release/<binary> /usr/local/bin/<binary>
 CMD ["<binary>"]
 ```
 

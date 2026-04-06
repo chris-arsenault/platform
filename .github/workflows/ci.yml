@@ -255,10 +255,15 @@ jobs:
 
       # ── Deploy (main only) ─────────────────────────────────
 
-      - name: Build backend
-        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
+      - name: Build backend (Lambda)
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas != 'true'
         working-directory: ${{ steps.config.outputs.rust_dir }}
         run: cargo lambda build --release --compiler cargo
+
+      - name: Build backend (TrueNAS)
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas == 'true'
+        working-directory: ${{ steps.config.outputs.rust_dir }}
+        run: cargo build --release
 
       - name: Build frontend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
