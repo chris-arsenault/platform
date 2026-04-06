@@ -137,14 +137,13 @@ jobs:
         if: steps.config.outputs.has_typescript == 'true'
         run: corepack enable && corepack prepare pnpm@10.29.3 --activate
 
-      - name: Cache pnpm store
+      - name: Restore pnpm cache
         if: steps.config.outputs.has_typescript == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/.local/share/pnpm/store/v10
           key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: pnpm-
-          save-always: true
 
       - name: Install frontend deps
         if: steps.config.outputs.has_typescript == 'true'
@@ -168,6 +167,13 @@ jobs:
           if pnpm exec vitest --help > /dev/null 2>&1; then
             pnpm exec vitest run --coverage
           fi
+
+      - name: Save pnpm cache
+        if: steps.config.outputs.has_typescript == 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.local/share/pnpm/store/v10
+          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
 
       # ── Python ──────────────────────────────────────────────
 
