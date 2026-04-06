@@ -204,6 +204,7 @@ Use the [`alb-api`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/ma
 ```hcl
 module "api" {
   source   = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/alb-api"
+  prefix   = "<prefix>"
   hostname = "api.<name>.ahara.io"
 
   environment = {
@@ -224,6 +225,8 @@ module "api" {
 }
 ```
 
+`prefix` must match the project prefix from Step 1 — it scopes all resource names so they fall within the deployer role's IAM permissions.
+
 ### Multiple Lambdas on One Hostname
 
 Pass multiple entries in the `lambdas` map. Each gets its own Lambda, target group, and listener rules:
@@ -231,6 +234,7 @@ Pass multiple entries in the `lambdas` map. Each gets its own Lambda, target gro
 ```hcl
 module "api" {
   source   = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/alb-api"
+  prefix   = "<prefix>"
   hostname = "api.<name>.ahara.io"
 
   environment = { DB_HOST = "..." }
@@ -439,6 +443,7 @@ data "aws_ssm_parameter" "db_database" {
 
 module "api" {
   source   = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/alb-api"
+  prefix   = "<prefix>"
   hostname = "api.<name>.ahara.io"
 
   environment = {
@@ -524,6 +529,7 @@ Use the [`website`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/ma
 ```hcl
 module "frontend" {
   source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
+  prefix         = "<prefix>"
   hostname       = "<name>.ahara.io"
   site_directory = "${path.module}/../../frontend/dist"
 
@@ -535,6 +541,8 @@ module "frontend" {
 }
 ```
 
+`prefix` must match the project prefix from Step 1 — it's used for the S3 bucket name, KMS key, WAF, and all other resources.
+
 The `runtime_config` map is injected as `window.__APP_CONFIG__` via a `config.js` file (served with `no-cache`). `index.html` is also `no-cache`; all other assets are `immutable` with 1-year max-age. SPA routing (404/403 → index.html) is enabled by default.
 
 ### With dynamic OpenGraph tags
@@ -544,6 +552,7 @@ Add `og_config` to deploy the platform OG server as a CloudFront origin. The OG 
 ```hcl
 module "frontend" {
   source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
+  prefix         = "<prefix>"
   hostname       = "<name>.ahara.io"
   site_directory = "${path.module}/../../frontend/dist"
   runtime_config = { ... }
