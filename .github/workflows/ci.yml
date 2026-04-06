@@ -45,6 +45,25 @@ jobs:
               f.write(f"has_migrations={'true' if cfg.get('migrations') else 'false'}\n")
               f.write(f"migrations_dir={cfg.get('migrations', '')}\n")
               f.write(f"has_truenas={'true' if cfg.get('truenas') else 'false'}\n")
+              # Detect directories from filesystem
+              import glob
+              cargo_files = glob.glob('**/Cargo.toml', recursive=True)
+              # Find the workspace root (shallowest Cargo.toml)
+              if cargo_files:
+                  rust_dir = os.path.dirname(sorted(cargo_files, key=lambda p: p.count('/'))[0]) or '.'
+              else:
+                  rust_dir = 'backend'
+              pkg_jsons = [p for p in glob.glob('**/package.json', recursive=True)
+                           if 'node_modules' not in p and 'backend' not in p]
+              if pkg_jsons:
+                  ts_dir = os.path.dirname(sorted(pkg_jsons, key=lambda p: p.count('/'))[0]) or '.'
+              else:
+                  ts_dir = 'frontend'
+              # Python uses same dir as Rust (both live in backend/)
+              python_dir = rust_dir
+              f.write(f"rust_dir={rust_dir}\n")
+              f.write(f"typescript_dir={ts_dir}\n")
+              f.write(f"python_dir={python_dir}\n")
               images = cfg.get('images', [])
               if images:
                   f.write(f"images={json.dumps(images)}\n")
@@ -70,7 +89,7 @@ jobs:
 
       - name: Lint rustfmt
         if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.rust_dir }}
         run: cargo fmt -- --check
 
       - name: Install Rust tools
@@ -85,12 +104,12 @@ jobs:
 
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.rust_dir }}
         run: CARGO_TARGET_DIR=target-clippy cargo clippy --release -- -D warnings
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.rust_dir }}
         run: |
           mkdir -p coverage
           CARGO_TARGET_DIR=target-cov cargo llvm-cov --release --lib --lcov --output-path coverage/lcov.info
@@ -123,28 +142,28 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.local/share/pnpm/store/v10
-          key: pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          key: pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: pnpm-
           save-always: true
 
       - name: Install frontend deps
         if: steps.config.outputs.has_typescript == 'true'
-        working-directory: frontend
+        working-directory: ${{ steps.config.outputs.typescript_dir }}
         run: pnpm install --frozen-lockfile
 
       - name: Lint eslint
         if: steps.config.outputs.has_typescript == 'true'
-        working-directory: frontend
+        working-directory: ${{ steps.config.outputs.typescript_dir }}
         run: pnpm exec eslint .
 
       - name: Lint typecheck
         if: steps.config.outputs.has_typescript == 'true'
-        working-directory: frontend
+        working-directory: ${{ steps.config.outputs.typescript_dir }}
         run: pnpm exec tsc --noEmit
 
       - name: Test frontend
         if: steps.config.outputs.has_typescript == 'true'
-        working-directory: frontend
+        working-directory: ${{ steps.config.outputs.typescript_dir }}
         run: |
           if pnpm exec vitest --help > /dev/null 2>&1; then
             pnpm exec vitest run --coverage
@@ -163,17 +182,17 @@ jobs:
 
       - name: Install backend deps
         if: steps.config.outputs.has_python == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.python_dir }}
         run: uv sync --extra dev
 
       - name: Lint backend
         if: steps.config.outputs.has_python == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.python_dir }}
         run: uv run --extra dev ruff check src/
 
       - name: Lint format backend
         if: steps.config.outputs.has_python == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.python_dir }}
         run: uv run --extra dev ruff format --check src/
 
       # ── Terraform ───────────────────────────────────────────
@@ -201,25 +220,25 @@ jobs:
           exclusions="**/.terraform/**"
           extra=""
           if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
-            sources="${sources:+$sources,}backend"
+            sources="${sources:+$sources,}${{ steps.config.outputs.rust_dir }}"
             exclusions="${exclusions},**/target/**"
           fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
-            sources="${sources:+$sources,}frontend/src"
+            sources="${sources:+$sources,}${{ steps.config.outputs.typescript_dir }}/src"
             exclusions="${exclusions},**/node_modules/**,**/dist/**"
           fi
           if [ "${{ steps.config.outputs.has_python }}" = "true" ]; then
-            sources="${sources:+$sources,}backend/src"
+            sources="${sources:+$sources,}${{ steps.config.outputs.python_dir }}/src"
           fi
           if [ "${{ steps.config.outputs.has_terraform }}" = "true" ]; then
             sources="${sources:+$sources,}infrastructure/terraform"
           fi
           extra_args=""
           if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
-            extra_args="${extra_args} -Dsonar.rust.lcov.reportPaths=backend/coverage/lcov.info"
+            extra_args="${extra_args} -Dsonar.rust.lcov.reportPaths=${{ steps.config.outputs.rust_dir }}/coverage/lcov.info"
           fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
-            extra_args="${extra_args} -Dsonar.javascript.lcov.reportPaths=frontend/coverage/lcov.info"
+            extra_args="${extra_args} -Dsonar.javascript.lcov.reportPaths=${{ steps.config.outputs.typescript_dir }}/coverage/lcov.info"
           fi
           echo "sources=${sources}" >> "$GITHUB_OUTPUT"
           echo "exclusions=${exclusions}" >> "$GITHUB_OUTPUT"
@@ -238,12 +257,12 @@ jobs:
 
       - name: Build backend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true'
-        working-directory: backend
+        working-directory: ${{ steps.config.outputs.rust_dir }}
         run: cargo lambda build --release --compiler cargo
 
       - name: Build frontend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
-        working-directory: frontend
+        working-directory: ${{ steps.config.outputs.typescript_dir }}
         run: pnpm run build
 
       - name: Build Lambda (Python)
