@@ -264,9 +264,7 @@ jobs:
         run: |
           cargo build --release
           mkdir -p dist
-          for f in target/release/*; do
-            [ -f "$f" ] && [ -x "$f" ] && [[ "$(basename "$f")" != *.* ]] && cp "$f" dist/
-          done
+          find target/release -maxdepth 1 -type f -executable ! -name '*.*' -exec cp {} dist/ \;
 
       - name: Build frontend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
