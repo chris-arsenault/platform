@@ -239,13 +239,13 @@ module "api" {
 
   environment = { DB_HOST = "..." }
 
-  iam_policy = jsonencode({
+  iam_policy = [jsonencode({
     Version = "2012-10-17"
     Statement = [
       { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "${aws_s3_bucket.media.arn}/*" },
       { Effect = "Allow", Action = ["bedrock:InvokeModel"], Resource = "*" },
     ]
-  })
+  })]
 
   lambdas = {
     tastings-api = {
@@ -297,7 +297,7 @@ For Lambdas that need access to TrueNAS/WireGuard services, set `vpn_access = tr
 ### What the module handles internally
 
 - **Lambdas**: `provided.al2023` runtime, `bootstrap` handler, `x86_64`, 256 MB, VPC in private subnets with platform Lambda SG. Binary is zipped automatically.
-- **IAM**: Shared role with `AWSLambdaBasicExecutionRole` + `AWSLambdaVPCAccessExecutionRole` + optional inline policy via `iam_policy`
+- **IAM**: Shared role with `AWSLambdaBasicExecutionRole` + `AWSLambdaVPCAccessExecutionRole` + optional inline policy via `iam_policy = [jsonencode(...)]` (list-wrapped to support computed values)
 - **ALB**: Target group, target group attachment, Lambda permission, listener rules with optional `jwt-validation`
 - **TLS**: ACM certificate with DNS validation, listener certificate attachment
 - **DNS**: Route53 A record aliased to the shared ALB
