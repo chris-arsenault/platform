@@ -35,6 +35,32 @@ runs:
             print(f"::error::{config_path} must declare a 'stack' list (e.g. rust, typescript, terraform)")
             sys.exit(1)
 
+        # If rust is in stack, rust_artifacts must be declared explicitly.
+        # Empty {} is allowed (rust code with no deployable artifacts, e.g. libraries).
+        if "rust" in stack:
+            if "rust_artifacts" not in config:
+                print(f"::error::{config_path} declares 'rust' in stack but is missing 'rust_artifacts'")
+                print("::error::Add a top-level 'rust_artifacts:' block. Use {} if no artifacts are deployed.")
+                sys.exit(1)
+            ra = config.get("rust_artifacts") or {}
+            if not isinstance(ra, dict):
+                print(f"::error::{config_path}: 'rust_artifacts' must be a mapping with optional 'lambdas' and 'binaries' keys")
+                sys.exit(1)
+            allowed_keys = {"lambdas", "binaries"}
+            extra = set(ra.keys()) - allowed_keys
+            if extra:
+                print(f"::error::{config_path}: 'rust_artifacts' has unknown keys: {sorted(extra)} (allowed: {sorted(allowed_keys)})")
+                sys.exit(1)
+            lambdas = ra.get("lambdas") or []
+            binaries = ra.get("binaries") or []
+            if not isinstance(lambdas, list) or not all(isinstance(x, str) for x in lambdas):
+                print(f"::error::{config_path}: 'rust_artifacts.lambdas' must be a list of strings (cargo bin names)")
+                sys.exit(1)
+            for i, b in enumerate(binaries):
+                if not (isinstance(b, dict) and isinstance(b.get("bin"), str) and isinstance(b.get("image"), str)):
+                    print(f"::error::{config_path}: 'rust_artifacts.binaries[{i}]' must be {{ bin: <name>, image: <dir> }}")
+                    sys.exit(1)
+
         # If the workflow calls the shared reusable workflow, all lint/test
         # steps are guaranteed — skip step-level checks.
         uses_shared = False

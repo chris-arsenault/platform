@@ -45,6 +45,14 @@ jobs:
               f.write(f"has_migrations={'true' if cfg.get('migrations') else 'false'}\n")
               f.write(f"migrations_dir={cfg.get('migrations', '')}\n")
               f.write(f"has_truenas={'true' if cfg.get('truenas') else 'false'}\n")
+              # Rust artifacts — explicit declaration of what gets built where
+              rust_artifacts = cfg.get("rust_artifacts") or {}
+              rust_lambdas = rust_artifacts.get("lambdas") or []
+              rust_binaries = rust_artifacts.get("binaries") or []
+              f.write(f"has_rust_lambdas={'true' if rust_lambdas else 'false'}\n")
+              f.write(f"has_rust_binaries={'true' if rust_binaries else 'false'}\n")
+              f.write(f"rust_lambdas={json.dumps(rust_lambdas)}\n")
+              f.write(f"rust_binaries={json.dumps(rust_binaries)}\n")
               # Detect directories from filesystem
               import glob
               cargo_files = glob.glob('**/Cargo.toml', recursive=True)
@@ -84,6 +92,7 @@ jobs:
             **/target
             **/target-clippy
             **/target-cov
+            **/target-lambda
           key: rust-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
             rust-${{ hashFiles('**/Cargo.lock') }}-
@@ -95,7 +104,7 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Install cargo-lambda
-        if: steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas != 'true'
+        if: steps.config.outputs.has_rust_lambdas == 'true'
         run: pip3 install cargo-lambda ziglang
 
       - name: Install cargo-llvm-cov
@@ -219,7 +228,7 @@ jobs:
           extra=""
           if [ "${{ steps.config.outputs.has_rust }}" = "true" ]; then
             sources="${sources:+$sources,}${{ steps.config.outputs.rust_dir }}"
-            exclusions="${exclusions},**/target/**,**/target-clippy/**,**/target-cov/**"
+            exclusions="${exclusions},**/target/**,**/target-clippy/**,**/target-cov/**,**/target-lambda/**"
           fi
           if [ "${{ steps.config.outputs.has_typescript }}" = "true" ]; then
             sources="${sources:+$sources,}${{ steps.config.outputs.typescript_dir }}/src"
@@ -253,18 +262,34 @@ jobs:
 
       # ── Deploy (main only) ─────────────────────────────────
 
-      - name: Build backend (Lambda)
-        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas != 'true'
-        working-directory: ${{ steps.config.outputs.rust_dir }}
-        run: cargo lambda build --release --compiler cargo
-
-      - name: Build backend (TrueNAS)
-        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust == 'true' && steps.config.outputs.has_truenas == 'true'
+      - name: Build Rust lambdas
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust_lambdas == 'true'
         working-directory: ${{ steps.config.outputs.rust_dir }}
         run: |
-          cargo build --release
-          mkdir -p dist
-          find target/release -maxdepth 1 -type f -executable ! -name '*.*' -exec cp {} dist/ \;
+          CARGO_TARGET_DIR=target-lambda cargo lambda build --release
+          mkdir -p target
+          ln -sfn "$(pwd)/target-lambda/lambda" target/lambda
+
+      - name: Build Rust binaries
+        if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_rust_binaries == 'true'
+        run: |
+          set -euo pipefail
+          RUST_DIR="${{ steps.config.outputs.rust_dir }}"
+          BINARIES_JSON='${{ steps.config.outputs.rust_binaries }}'
+          # Build only the declared bins (selective, avoids extra workspace members)
+          BIN_ARGS=$(echo "$BINARIES_JSON" | python3 -c "import sys,json; print(' '.join(f'--bin {b[\"bin\"]}' for b in json.load(sys.stdin)))")
+          (cd "$RUST_DIR" && cargo build --release $BIN_ARGS)
+          # Copy each built binary into <image>/dist/<bin>
+          echo "$BINARIES_JSON" | python3 -c "
+          import sys, json, shutil, os
+          for entry in json.load(sys.stdin):
+              bin_name, image = entry['bin'], entry['image']
+              src = os.path.join('$RUST_DIR', 'target', 'release', bin_name)
+              dst_dir = os.path.join(image, 'dist')
+              os.makedirs(dst_dir, exist_ok=True)
+              shutil.copy2(src, os.path.join(dst_dir, bin_name))
+              print(f'copied {src} -> {dst_dir}/{bin_name}')
+          "
 
       - name: Build frontend
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_typescript == 'true'
@@ -360,6 +385,7 @@ jobs:
             **/target
             **/target-clippy
             **/target-cov
+            **/target-lambda
           key: rust-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
 
   report:
