@@ -573,6 +573,22 @@ module "frontend" {
 
 The `runtime_config` map is injected as `window.__APP_CONFIG__` via a `config.js` file (served with `no-cache`). `index.html` is also `no-cache`; all other assets are `immutable` with 1-year max-age. SPA routing (404/403 → index.html) is enabled by default.
 
+### Multiple hostnames
+
+To serve one CloudFront distribution from multiple FQDNs (apex + subdomains, or hostnames across multiple Route53 zones), pass `aliases`:
+
+```hcl
+module "frontend" {
+  source         = "git::https://github.com/chris-arsenault/ahara-tf-patterns.git//modules/website"
+  prefix         = "tsonu-music"
+  hostname       = "music.tsonu.com"
+  aliases        = ["tsonu.com", "www.tsonu.com", "music.ahara.io"]
+  site_directory = "..."
+}
+```
+
+Each alias is added to the CloudFront distribution, covered by the ACM cert as a SAN, and given an A/AAAA record in the appropriate Route53 zone. Zones are auto-derived from each hostname (last 2 labels) — Route53 zones for both `tsonu.com` and `ahara.io` must exist in the AWS account. No IAM changes needed; the `acm-dns` policy already covers all hosted zones.
+
 ### With dynamic OpenGraph tags
 
 Add `og_config` to deploy the platform OG server as a CloudFront origin. The OG server generates HTML with per-route meta tags for social media link previews:
