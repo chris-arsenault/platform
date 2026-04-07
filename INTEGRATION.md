@@ -97,49 +97,48 @@ module "<name>_project" {
 
   prefix           = "<prefix>"
   state_key_prefix = "projects/<name>"
-  policy_modules   = ["terraform-state", "<additional-policies>"]
+
+  # Declare which shared ahara-tf-patterns modules your project uses.
+  # Each bundle auto-expands to the full set of IAM permissions that
+  # module needs — no need to enumerate individual primitives.
+  module_bundles = ["website", "alb-api", "cognito-app"]
+
+  # Additional primitives for capabilities outside the shared modules.
+  policy_modules = [
+    "terraform-state",
+    "db-migrate",
+  ]
 }
 ```
 
-### Policy modules
+### Module bundles
 
-These names must match the keys in `platform-control/infrastructure/terraform/modules/managed-project/policy-map.tf` exactly.
+The preferred way to declare permissions. Each bundle maps to a shared module in `ahara-tf-patterns` and auto-expands to the set of IAM primitives that module needs. When a shared module gains new resource types, the bundle is updated in one place and all consumers pick up the new permissions on the next platform-control deploy.
 
-| Module | When to include |
-|--------|----------------|
+| Bundle | Use when your project includes... | Expands to |
+|--------|-----------------------------------|-----------|
+| `website` | `ahara-tf-patterns/modules/website` | `s3-website`, `cloudfront-distribution`, `acm-dns`, `wafv2`, `kms-admin`, `iam-roles`, `lambda-deploy`, `ssm-write` |
+| `alb-api` | `ahara-tf-patterns/modules/alb-api` | `lambda-deploy`, `alb-target-group`, `acm-dns`, `iam-roles` |
+| `cognito-app` | `ahara-tf-patterns/modules/cognito-app` | `cognito-client`, `ssm-write` |
+| `lambda` | `ahara-tf-patterns/modules/lambda` (standalone) | `lambda-deploy`, `iam-roles` |
+
+### Primitive policy modules
+
+For capabilities outside the shared modules, use primitives directly. These names match the keys in `platform-control/infrastructure/terraform/modules/managed-project/policy-map.tf`:
+
+| Primitive | When to include |
+|-----------|----------------|
 | `terraform-state` | **Always** — access to the shared state bucket |
-| `lambda-deploy` | Project has Lambda functions |
-| `alb-target-group` | Project creates ALB target groups (any project using the `alb-api` module) |
 | `db-migrate` | Project uses the shared RDS database and migrations |
-| `cognito-client` | Project creates its own Cognito client (most apps) |
-| `bedrock-inference` | Project uses Bedrock model invocation |
-| `iam-roles` | Project creates IAM roles scoped to its prefix |
-| `s3-website` | Project deploys S3 website buckets (`website` module) |
-| `cloudfront-distribution` | Project creates CloudFront distributions (`website` module) |
-| `acm-dns` | Project creates ACM certificates + Route53 records (`alb-api` and `website` modules) |
-| `wafv2` | Project creates WAFs — required by `website` module (CloudFront-scoped) |
 | `dynamodb` | Project uses DynamoDB tables |
+| `bedrock-inference` | Project uses Bedrock model invocation |
 | `sns` | Project publishes to SNS topics |
-| `ssm-write` | Project writes to SSM parameters |
 | `secrets-manager` | Project uses AWS Secrets Manager |
-| `control-plane` | **Platform repos only** — broad Cognito, DynamoDB, SSM, SNS, ACM, Route53 |
-
-**Minimum policies for a typical frontend + API project using `ahara-tf-patterns`:**
-
-```hcl
-policy_modules = [
-  "terraform-state",
-  "lambda-deploy",
-  "alb-target-group",
-  "acm-dns",
-  "cognito-client",
-  "s3-website",
-  "cloudfront-distribution",
-  "wafv2",
-]
-```
-
-> ⚠️ **KMS gotcha:** The `website` module defaults to `encrypt = true`, which creates a KMS key for the S3 bucket. There is currently no platform policy module for KMS key management, so the deployer role cannot create KMS keys with the standard policy set. **Pass `encrypt = false` until a `kms-admin` policy module is added**, or add the necessary KMS permissions to the deployer role via a custom inline policy.
+| `komodo-deploy` | Project deploys via Komodo to TrueNAS |
+| `ec2-vpc-compute` / `ec2-security-groups` | Project manages EC2 / VPC resources |
+| `rds` | Project manages RDS instances (platform-services only) |
+| `cognito-pool` | Project manages the shared Cognito user pool (platform-services only) |
+| `control-plane` | **Platform repos only** — broad privileged access |
 
 ---
 
@@ -551,9 +550,7 @@ Skip this step if your project has no web frontend.
 
 Use the [`website`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/website) module. It deploys files to S3 behind CloudFront with a custom domain, ACM certificate, WAF, KMS encryption, and CloudFront invalidation on deploy.
 
-> ⚠️ **Policy prerequisites.** The module creates a CloudFront-scoped WAF and (by default) a KMS key for the S3 bucket. You must include `wafv2`, `s3-website`, `cloudfront-distribution`, and `acm-dns` in your `policy_modules` (Step 1). The `wafv2` policy grants both regional and CloudFront scope.
->
-> **KMS gotcha:** There is currently no platform policy module for KMS key creation. If your deployer role lacks `kms:CreateKey`/`kms:CreateAlias`/etc. permissions, pass `encrypt = false` to the module. This is the default recommendation until a `kms-admin` policy module exists.
+Include `"website"` in your `module_bundles` (Step 1) — it auto-grants all required IAM permissions including `s3-website`, `cloudfront-distribution`, `acm-dns`, `wafv2` (CloudFront-scoped), and `kms-admin`.
 
 ### SPA (React, Vue, etc.)
 
