@@ -300,7 +300,7 @@ For Lambdas that need access to TrueNAS/WireGuard services, set `vpn_access = tr
 - **IAM**: Shared role with `AWSLambdaBasicExecutionRole` + `AWSLambdaVPCAccessExecutionRole` + optional inline policy via `iam_policy = [jsonencode(...)]` (list-wrapped to support computed values)
 - **ALB**: Target group, target group attachment, Lambda permission, listener rules with optional `jwt-validation`
 - **TLS**: ACM certificate with DNS validation, listener certificate attachment
-- **DNS**: Route53 A record aliased to the shared ALB
+- **DNS**: Route53 A record aliased to the shared ALB. Zone is resolved from the last two labels of `hostname` (e.g. `ahara.io` for `api.tastebase.ahara.io`). Pass an explicit `zone_name` for delegated subzones or multi-label TLDs.
 - **Platform discovery**: All lookups (ALB, Cognito, VPC, subnets, SGs) handled internally via `platform-context`
 
 ### Module outputs
