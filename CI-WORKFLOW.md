@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   ci:
-    uses: chris-arsenault/platform/.github/workflows/ci.yml@main
+    uses: chris-arsenault/ahara/.github/workflows/ci.yml@main
     secrets: inherit
 ```
 
@@ -167,7 +167,7 @@ This prevents drift — if someone removes a lint step, CI fails immediately.
 ## SonarQube Integration
 
 The shared workflow runs SonarQube analysis automatically. It:
-- Reads the CI token and URL from SSM (`/platform/sonarqube/ci-token`, `/platform/sonarqube/url`)
+- Reads the CI token and URL from SSM (`/ahara/sonarqube/ci-token`, `/ahara/sonarqube/url`)
 - Builds sources/exclusions lists from the stack declaration
 - Passes `-Dsonar.terraform.provider.aws.version=6` for accurate terraform analysis
 
@@ -179,13 +179,13 @@ SonarQube is non-blocking (`continue-on-error: true`).
 
 ```yaml
 - id: sonar
-  uses: chris-arsenault/platform/.github/actions/sonar-scan-dotnet-begin@main
+  uses: chris-arsenault/ahara/.github/actions/sonar-scan-dotnet-begin@main
   with:
     project-key: <name>
 
 # ... dotnet build, dotnet test ...
 
-- uses: chris-arsenault/platform/.github/actions/sonar-scan-dotnet-end@main
+- uses: chris-arsenault/ahara/.github/actions/sonar-scan-dotnet-end@main
   with:
     token: ${{ steps.sonar.outputs.token }}
 ```
@@ -199,7 +199,7 @@ For projects that can't use standard deploy, set `deploy: false`:
 ```yaml
 jobs:
   ci:
-    uses: chris-arsenault/platform/.github/workflows/ci.yml@main
+    uses: chris-arsenault/ahara/.github/workflows/ci.yml@main
     with:
       deploy: false
     secrets: inherit

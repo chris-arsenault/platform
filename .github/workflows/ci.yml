@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: chris-arsenault/platform/.github/actions/governance-check@main
+      - uses: chris-arsenault/ahara/.github/actions/governance-check@main
 
       - name: Read platform.yml
         id: config
@@ -252,7 +252,7 @@ jobs:
           echo "extra_args=${extra_args}" >> "$GITHUB_OUTPUT"
         shell: bash
 
-      - uses: chris-arsenault/platform/.github/actions/sonar-scan@main
+      - uses: chris-arsenault/ahara/.github/actions/sonar-scan@main
         continue-on-error: true
         with:
           project-key: ${{ steps.config.outputs.project }}
@@ -300,7 +300,7 @@ jobs:
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_python == 'true'
         run: bash scripts/build-lambda.sh
 
-      - uses: chris-arsenault/platform/.github/actions/run-migrations@main
+      - uses: chris-arsenault/ahara/.github/actions/run-migrations@main
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_migrations == 'true'
         with:
           project: ${{ steps.config.outputs.project }}
@@ -364,7 +364,7 @@ jobs:
           PYEOF
         shell: bash
 
-      - uses: chris-arsenault/platform/.github/actions/deploy-truenas@main
+      - uses: chris-arsenault/ahara/.github/actions/deploy-truenas@main
         if: inputs.deploy && github.ref == 'refs/heads/main' && steps.config.outputs.has_truenas == 'true'
         with:
           stack-name: ${{ steps.config.outputs.project }}
@@ -399,4 +399,4 @@ jobs:
           role-to-assume: ${{ secrets.OIDC_ROLE }}
           role-session-name: GitHubActions-${{ github.run_id }}
           aws-region: us-east-1
-      - uses: chris-arsenault/platform/.github/actions/report-build@main
+      - uses: chris-arsenault/ahara/.github/actions/report-build@main

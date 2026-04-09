@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Adds platform/bin to PATH in your shell profile.
-# Run once: ~/src/platform/bin/platform-setup
+# Run once: ~/src/ahara/bin/platform-setup
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"

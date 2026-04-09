@@ -24,8 +24,8 @@ inputs:
     description: |
       Newline-separated KEY=ssm-path pairs. Values are resolved by the Lambda, never exposed to GHA.
       Example:
-        DB_PASSWORD=/platform/rds/master-password
-        COGNITO_CLIENT_ID=/platform/cognito/client-id
+        DB_PASSWORD=/ahara/rds/master-password
+        COGNITO_CLIENT_ID=/ahara/cognito/client-id
     required: false
     default: ""
 
@@ -36,7 +36,7 @@ runs:
       run: |
         set -euo pipefail
         REGION="us-east-1"
-        DB_FN=$(aws ssm get-parameter --name /platform/truenas-db/function-name \
+        DB_FN=$(aws ssm get-parameter --name /ahara/truenas-db/function-name \
           --query Parameter.Value --output text --region "${REGION}" 2>/dev/null || echo "")
 
         if [ -n "${DB_FN}" ]; then
@@ -70,7 +70,7 @@ runs:
       run: |
         set -euo pipefail
         REGION="us-east-1"
-        FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+        FN=$(aws ssm get-parameter --name /ahara/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")
 
         invoke_lambda() {
@@ -153,7 +153,7 @@ runs:
       run: |
         set -euo pipefail
         REGION="us-east-1"
-        FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+        FN=$(aws ssm get-parameter --name /ahara/komodo/function-name \
           --query Parameter.Value --output text --region "${REGION}")
 
         invoke_lambda() {

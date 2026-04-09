@@ -82,7 +82,7 @@ copy_state() {
 # Platform repos
 copy_state "tf-state-boilerplate-${ACCOUNT_ID}" "aws-boilerplate.tfstate"     "platform/control.tfstate"
 copy_state "tf-state-vpn-${ACCOUNT_ID}"         "wireguard.tfstate"           "platform/network.tfstate"
-copy_state "tf-state-platform-${ACCOUNT_ID}"    "platform-services.tfstate"   "platform/services.tfstate"
+copy_state "tf-state-ahara-${ACCOUNT_ID}"    "ahara-services.tfstate"   "platform/services.tfstate"
 
 # Consumer projects
 copy_state "tf-state-websites-${ACCOUNT_ID}"    "ahara-static-websites.tfstate" "projects/websites.tfstate"
@@ -96,7 +96,7 @@ echo -e "${GREEN}${BOLD}State files copied.${RESET}"
 OLD_BUCKETS=(
   "tf-state-boilerplate-${ACCOUNT_ID}"
   "tf-state-vpn-${ACCOUNT_ID}"
-  "tf-state-platform-${ACCOUNT_ID}"
+  "tf-state-ahara-${ACCOUNT_ID}"
   "tf-state-websites-${ACCOUNT_ID}"
   "svap-tfstate-${ACCOUNT_ID}"
 )
@@ -135,4 +135,4 @@ done
 echo
 echo -e "${GREEN}${BOLD}Migration complete.${RESET}"
 echo
-echo "Next: run ~/src/platform/scripts/deploy-all.sh"
+echo "Next: run ~/src/ahara/scripts/deploy-all.sh"

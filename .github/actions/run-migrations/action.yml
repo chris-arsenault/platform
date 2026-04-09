@@ -3,7 +3,7 @@ description: Upload migration SQL files to S3 and invoke the platform migration 
 
 inputs:
   project:
-    description: Project name (must match platform-services migration_projects registration)
+    description: Project name (must match ahara-services migration_projects registration)
     required: true
   migrations-dir:
     description: Path to the migrations directory relative to the repo root
@@ -23,9 +23,9 @@ runs:
           exit 0
         fi
 
-        BUCKET=$(aws ssm get-parameter --name /platform/db/migrations-bucket \
+        BUCKET=$(aws ssm get-parameter --name /ahara/db/migrations-bucket \
           --query Parameter.Value --output text --region "${REGION}")
-        FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+        FN=$(aws ssm get-parameter --name /ahara/db/migrate-function \
           --query Parameter.Value --output text --region "${REGION}")
 
         echo "Uploading migrations for ${PROJECT}..."

@@ -32,12 +32,12 @@ echo -e "${BOLD}=== Platform Deploy ===${RESET}"
 echo
 
 # Layer 0: Control plane (IAM roles, state buckets, GitHub secrets)
-deploy platform-control
+deploy ahara-control
 
 # Layer 1: Shared services (Cognito, RDS, observability)
-deploy platform-services
+deploy ahara-services
 
 # Layer 2: Infrastructure (VPC, ALB, VPN — reads Cognito SSM params from layer 1)
-deploy platform-network
+deploy ahara-network
 
 echo -e "${GREEN}${BOLD}All platform layers deployed.${RESET}"

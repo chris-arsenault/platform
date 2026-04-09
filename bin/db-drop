@@ -12,7 +12,7 @@ if [ "${CONFIRM}" != "${PROJECT}" ]; then
   exit 1
 fi
 
-FN=$(aws ssm get-parameter --name /platform/db/migrate-function \
+FN=$(aws ssm get-parameter --name /ahara/db/migrate-function \
   --query Parameter.Value --output text --region "${REGION}")
 
 echo "Dropping ${PROJECT}..."

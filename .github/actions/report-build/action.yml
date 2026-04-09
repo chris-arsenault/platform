@@ -12,8 +12,8 @@ runs:
     - run: |
         set -euo pipefail
 
-        WEBHOOK_URL=$(aws ssm get-parameter --name /platform/ci/url --query Parameter.Value --output text --region us-east-1)
-        TOKEN=$(aws ssm get-parameter --name /platform/ci/ingest-token --with-decryption --query Parameter.Value --output text --region us-east-1)
+        WEBHOOK_URL=$(aws ssm get-parameter --name /ahara/ci/url --query Parameter.Value --output text --region us-east-1)
+        TOKEN=$(aws ssm get-parameter --name /ahara/ci/ingest-token --with-decryption --query Parameter.Value --output text --region us-east-1)
 
         BODY=$(python3 << 'PYEOF'
         import json, os, urllib.request, sys

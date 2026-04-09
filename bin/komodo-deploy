@@ -4,13 +4,13 @@
 #
 # Usage:
 #   komodo-deploy                          # deploy with no secrets
-#   komodo-deploy DB_HOST=/platform/rds/address DB_PASS=/platform/rds/master-password
+#   komodo-deploy DB_HOST=/ahara/rds/address DB_PASS=/ahara/rds/master-password
 set -euo pipefail
 
 REGION="us-east-1"
 PROJECT=$(platform-manifest project)
 
-FN=$(aws ssm get-parameter --name /platform/komodo/function-name \
+FN=$(aws ssm get-parameter --name /ahara/komodo/function-name \
   --query Parameter.Value --output text --region "${REGION}")
 
 # Build secrets from arguments

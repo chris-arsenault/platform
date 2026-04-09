@@ -6,7 +6,7 @@ set -euo pipefail
 REGION="us-east-1"
 PROJECT=$(platform-manifest project)
 
-FN=$(aws ssm get-parameter --name /platform/truenas-db/function-name \
+FN=$(aws ssm get-parameter --name /ahara/truenas-db/function-name \
   --query Parameter.Value --output text --region "${REGION}")
 
 echo "Ensuring TrueNAS database for ${PROJECT}..."

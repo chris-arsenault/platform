@@ -31,12 +31,12 @@ runs:
         set -euo pipefail
         REGION="us-east-1"
 
-        TOKEN=$(aws ssm get-parameter --name /platform/sonarqube/ci-token \
+        TOKEN=$(aws ssm get-parameter --name /ahara/sonarqube/ci-token \
           --with-decryption --query Parameter.Value --output text --region "${REGION}")
         echo "::add-mask::${TOKEN}"
         echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
-        URL=$(aws ssm get-parameter --name /platform/sonarqube/url \
+        URL=$(aws ssm get-parameter --name /ahara/sonarqube/url \
           --query Parameter.Value --output text --region "${REGION}")
         echo "url=${URL}" >> "$GITHUB_OUTPUT"
       shell: bash
