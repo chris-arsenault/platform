@@ -1,1 +1,5 @@
 .env
+.serena/
+.drift-audit/
+.claude/
+drift-output.txt

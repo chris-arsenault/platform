@@ -1,0 +1,426 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_POSTGRESQL",
+      "label": "PostgreSQL",
+      "description": "Platform RDS (platform database)",
+      "type": "datasource",
+      "pluginId": "grafana-postgresql-datasource",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "11.0.0" },
+    { "type": "datasource", "id": "grafana-postgresql-datasource", "name": "PostgreSQL", "version": "1.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" },
+    { "type": "panel", "id": "barchart", "name": "Bar chart", "version": "" }
+  ],
+  "id": null,
+  "uid": "ci-builds",
+  "title": "CI Builds",
+  "description": "GitHub Actions build reports from the report-build action",
+  "tags": ["ci", "platform"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "fiscalYearStartMonth": 0,
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "repo",
+        "type": "query",
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+        "query": "SELECT DISTINCT repo FROM ci_builds ORDER BY repo",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "includeAll": true,
+        "allValue": "%",
+        "multi": true,
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "branch",
+        "type": "query",
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+        "query": "SELECT DISTINCT branch FROM ci_builds WHERE repo LIKE '$repo' ORDER BY branch",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "includeAll": true,
+        "allValue": "%",
+        "multi": true,
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Builds (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) AS total FROM ci_builds WHERE created_at > NOW() - INTERVAL '24 hours' AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 2,
+      "title": "Success Rate (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'success') / NULLIF(COUNT(*), 0), 1) AS success_pct FROM ci_builds WHERE created_at > NOW() - INTERVAL '24 hours' AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "green", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 3,
+      "title": "Failure Rate (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'failure') / NULLIF(COUNT(*), 0), 1) AS failure_pct FROM ci_builds WHERE created_at > NOW() - INTERVAL '24 hours' AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 25 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 4,
+      "title": "Avg Build Time (24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(AVG(duration_seconds)) AS avg_seconds FROM ci_builds WHERE created_at > NOW() - INTERVAL '24 hours' AND duration_seconds IS NOT NULL AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 600 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 5,
+      "title": "Lint Pass Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE lint_passed = true) / NULLIF(COUNT(*) FILTER (WHERE lint_passed IS NOT NULL), 0), 1) AS lint_pct FROM ci_builds WHERE $__timeFilter(created_at) AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 6,
+      "title": "Test Pass Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE test_passed = true) / NULLIF(COUNT(*) FILTER (WHERE test_passed IS NOT NULL), 0), 1) AS test_pct FROM ci_builds WHERE $__timeFilter(created_at) AND repo LIKE '$repo' AND branch LIKE '$branch'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 10,
+      "title": "Build Success Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeGroup(created_at, $__interval) AS time, repo, ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'success') / NULLIF(COUNT(*), 0), 1) AS success_rate FROM ci_builds WHERE $__timeFilter(created_at) AND repo LIKE '$repo' AND branch LIKE '$branch' GROUP BY time, repo ORDER BY time",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "green", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 11,
+      "title": "Build Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT $__timeGroup(created_at, $__interval) AS time, repo, ROUND(AVG(duration_seconds)) AS avg_duration, MAX(duration_seconds) AS max_duration FROM ci_builds WHERE $__timeFilter(created_at) AND duration_seconds IS NOT NULL AND repo LIKE '$repo' AND branch LIKE '$branch' GROUP BY time, repo ORDER BY time",
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 20,
+      "title": "Current Status",
+      "description": "Latest build per repo/workflow",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT DISTINCT ON (repo, workflow) repo, workflow, status, branch, duration_seconds, lint_passed, test_passed, run_url, created_at FROM ci_builds WHERE repo LIKE '$repo' AND branch LIKE '$branch' ORDER BY repo, workflow, created_at DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "success": { "color": "green", "text": "success" }, "failure": { "color": "red", "text": "failure" }, "cancelled": { "color": "yellow", "text": "cancelled" } } }
+                ]
+              },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "run_url" },
+            "properties": [
+              { "id": "links", "value": [{ "title": "View Run", "url": "${__data.fields.run_url}", "targetBlank": true }] },
+              { "id": "custom.width", "value": 80 },
+              { "id": "displayName", "value": "Link" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "lint_passed" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "true": { "text": "Pass", "color": "green" }, "false": { "text": "Fail", "color": "red" } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "test_passed" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "true": { "text": "Pass", "color": "green" }, "false": { "text": "Fail", "color": "red" } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "duration_seconds" },
+            "properties": [
+              { "id": "unit", "value": "s" },
+              { "id": "displayName", "value": "Duration" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "created_at" },
+            "properties": [
+              { "id": "unit", "value": "dateTimeFromNow" },
+              { "id": "displayName", "value": "Last Run" }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Last Run", "desc": true }],
+        "footer": { "show": false }
+      }
+    },
+    {
+      "id": 30,
+      "title": "Failures by Repo",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT repo, COUNT(*) AS failures FROM ci_builds WHERE $__timeFilter(created_at) AND status = 'failure' AND repo LIKE '$repo' AND branch LIKE '$branch' GROUP BY repo ORDER BY failures DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" }
+        },
+        "overrides": []
+      },
+      "options": { "xField": "repo", "legend": { "displayMode": "hidden" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 31,
+      "title": "Builds by Status",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "${DS_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT repo, COUNT(*) FILTER (WHERE status = 'success') AS success, COUNT(*) FILTER (WHERE status = 'failure') AS failure, COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled FROM ci_builds WHERE $__timeFilter(created_at) AND repo LIKE '$repo' AND branch LIKE '$branch' GROUP BY repo ORDER BY repo",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "success" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "failure" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "cancelled" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "xField": "repo", "stacking": "normal", "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}
