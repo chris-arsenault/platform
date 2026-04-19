@@ -191,9 +191,9 @@ services:
 
 ## TrueNAS Database
 
-TrueNAS services use a separate PostgreSQL instance on TrueNAS (192.168.66.3:5432), not the shared RDS. Database management is handled by the `ahara-db-migrate-truenas` Lambda in `ahara-services`.
+TrueNAS services use a separate PostgreSQL instance on TrueNAS (192.168.66.3:5432), not the shared RDS. Database management is handled by the `ahara-db-migrate-truenas` Lambda in the `ahara-infra` services layer.
 
-To register a new TrueNAS database project, add it to `var.truenas_db_projects` in `ahara-services/infrastructure/terraform/db-migrate-truenas.tf`:
+To register a new TrueNAS database project, add it to `var.truenas_db_projects` in `ahara-infra/infrastructure/terraform/services/db-migrate-truenas.tf`:
 
 ```hcl
 variable "truenas_db_projects" {
@@ -212,11 +212,11 @@ The Lambda creates the database, application role, and publishes credentials to 
 TrueNAS services are reached via WireGuard VPN. The reverse proxy (nginx on EC2) routes traffic from the shared ALB to TrueNAS:
 
 - **ALB** → **CloudFront** → **ALB** → **nginx reverse proxy** → **WireGuard** → **TrueNAS**
-- Routes are defined in `ahara-network/infrastructure/terraform/locals.tf` under `reverse_proxy_routes`
+- Routes are defined in `ahara-infra/infrastructure/terraform/network/locals.tf` under `reverse_proxy_routes`
 - Each route needs: `address` (TrueNAS IP), `port` (container host port), `auth` (cognito/passthrough)
 - Optional: `max_body_size` for routes that handle large uploads
 
-To add a new reverse proxy route, add an entry to `reverse_proxy_routes` in ahara-network.
+To add a new reverse proxy route, add an entry to `reverse_proxy_routes` in the `ahara-infra` network layer.
 
 ---
 
@@ -253,4 +253,4 @@ jobs:
 The ALB has a WAF with `AWSManagedRulesCommonRuleSet`. The `SizeRestrictions_BODY` rule blocks request bodies over 8KB. If your service accepts large uploads through the reverse proxy:
 
 1. Add `max_body_size` to the route in `reverse_proxy_routes` (nginx layer)
-2. The WAF has an exemption for `sonar.ahara.io/api/ce/submit` — similar exemptions can be added in `ahara-network/infrastructure/terraform/waf.tf`
+2. The WAF has an exemption for `sonar.ahara.io/api/ce/submit` — similar exemptions can be added in `ahara-infra/infrastructure/terraform/network/waf.tf`

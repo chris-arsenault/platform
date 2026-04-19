@@ -18,7 +18,7 @@
 | **Custom ESLint rules** | `npm install -D github:chris-arsenault/ahara-standards` — import from `@ahara/standards/eslint-rules` |
 | **CI/CD workflow** (shared workflow, platform.yml, governance, SonarQube) | [CI-WORKFLOW.md](CI-WORKFLOW.md) |
 | **TrueNAS deploy** (Docker, Komodo, secret-paths.yml, networking) | [TRUENAS-DEPLOY.md](TRUENAS-DEPLOY.md) |
-| **Shared GitHub Actions** | `sonar-scan`, `report-build`, `governance-check`, `run-migrations`, `deploy-truenas` in `platform/.github/actions/` |
+| **Shared GitHub Actions** | `sonar-scan`, `report-build`, `governance-check`, `run-migrations`, `deploy-truenas` in `ahara/.github/actions/` |
 | **Platform CLI tools** | `~/src/ahara/bin/` — `db-migrate`, `db-seed`, `db-rollback`, `db-drop`, `db-noop`, `db-restore` |
 | **Standards index** | [ahara-standards/standards/README.md](https://github.com/chris-arsenault/ahara-standards/blob/main/standards/README.md) |
 | **Dynamic OpenGraph** (per-route OG tags for SPAs) | [OPENGRAPH.md](OPENGRAPH.md) |
@@ -48,17 +48,17 @@ Use this to determine which steps apply to your project.
 
 | Step | What | Where | Required? |
 |------|------|-------|-----------|
-| 1 | Register deployer role | `ahara-control` repo | Always |
+| 1 | Register deployer role | `ahara-infra` repo (control layer) | Always |
 | 2 | Terraform backend | Your project | Always |
 | 3 | Deploy script | Your project | Always |
 | 4 | ALB backend (`alb-api` module) | Your project | If project has an HTTP API |
-| 5 | Database (platform.yml, migrations, seed) | Your project + `ahara-services` registration | If project uses PostgreSQL |
+| 5 | Database (platform.yml, migrations, seed) | Your project + `ahara-infra` registration (services layer) | If project uses PostgreSQL |
 | 6 | Cognito client (`cognito-app` module) | Your project | If project has a frontend with login |
 | 7 | Frontend (`website` module) | Your project | If project has a web frontend |
 | 8 | CI/CD workflow (shared workflow + platform.yml + Makefile) | Your project — see [CI-WORKFLOW.md](CI-WORKFLOW.md) | Always |
 | 9 | Required project files (README, LICENSE, CLAUDE.md, platform.yml) | Your project | Always |
 
-> **IMPORTANT for AI agents:** Steps 1 and 5 require changes to **other repos** (`ahara-control` and `ahara-services`). These are not documentation tasks — they are blocking prerequisites. You MUST make the actual file changes in those repos, not defer them to a docs/ folder or TODO list. The project cannot deploy without them. Treat cross-repo changes the same as in-project changes: make the edit, verify it, and tell the user it's done.
+> **IMPORTANT for AI agents:** Steps 1 and 5 require changes to the **`ahara-infra` repo** — a repo other than your project's home repo. These are not documentation tasks — they are blocking prerequisites. You MUST make the actual file changes in `ahara-infra`, not defer them to a docs/ folder or TODO list. The project cannot deploy without them. Treat cross-repo changes the same as in-project changes: make the edit, verify it, and tell the user it's done.
 
 ---
 
@@ -73,15 +73,15 @@ These placeholders appear throughout. Decide them once and use consistently.
 | `<service>` | Subdomain for the API endpoint | `api.dosekit.ahara.io` |
 | `<github-repo>` | GitHub repo name (without owner) | `dosekit` |
 
-`<name>` and `<prefix>` are often the same value. They only differ for legacy projects (e.g. prefix `boilerplate` for repo `ahara-control`).
+`<name>` and `<prefix>` are often the same value.
 
 ---
 
 ## Step 1: Register the Project
 
-**This step requires a change to the `ahara-control` repo.**
+**This step requires a change to the `ahara-infra` repo.**
 
-Create `~/src/ahara-control/infrastructure/terraform/project-<name>.tf`:
+Create `~/src/ahara-infra/infrastructure/terraform/control/project-<name>.tf`:
 
 ```hcl
 module "<name>_project" {
@@ -113,7 +113,7 @@ module "<name>_project" {
 
 ### Module bundles
 
-The preferred way to declare permissions. Each bundle maps to a shared module in `ahara-tf-patterns` and auto-expands to the set of IAM primitives that module needs. When a shared module gains new resource types, the bundle is updated in one place and all consumers pick up the new permissions on the next ahara-control deploy.
+The preferred way to declare permissions. Each bundle maps to a shared module in `ahara-tf-patterns` and auto-expands to the set of IAM primitives that module needs. When a shared module gains new resource types, the bundle is updated in one place and all consumers pick up the new permissions on the next `ahara-infra` deploy.
 
 | Bundle | Use when your project includes... | Expands to |
 |--------|-----------------------------------|-----------|
@@ -124,7 +124,7 @@ The preferred way to declare permissions. Each bundle maps to a shared module in
 
 ### Primitive policy modules
 
-For capabilities outside the shared modules, use primitives directly. These names match the keys in `ahara-control/infrastructure/terraform/modules/managed-project/policy-map.tf`:
+For capabilities outside the shared modules, use primitives directly. These names match the keys in `ahara-infra/infrastructure/terraform/control/modules/managed-project/policy-map.tf`:
 
 | Primitive | When to include |
 |-----------|----------------|
@@ -136,9 +136,9 @@ For capabilities outside the shared modules, use primitives directly. These name
 | `secrets-manager` | Project uses AWS Secrets Manager |
 | `komodo-deploy` | Project deploys via Komodo to TrueNAS |
 | `ec2-vpc-compute` / `ec2-security-groups` | Project manages EC2 / VPC resources |
-| `rds` | Project manages RDS instances (ahara-services only) |
-| `cognito-pool` | Project manages the shared Cognito user pool (ahara-services only) |
-| `control-plane` | **Platform repos only** — broad privileged access |
+| `rds` | Project manages RDS instances (`ahara-infra` only) |
+| `cognito-pool` | Project manages the shared Cognito user pool (`ahara-infra` only) |
+| `control-plane` | **`ahara-infra` only** — broad privileged access |
 
 ---
 
@@ -345,8 +345,8 @@ Existing allocations:
 
 | Priority | Host | Owner |
 |----------|------|-------|
-| 100 | dashboards.ahara.io | ahara-network |
-| 150 | ci.ahara.io | ahara-services |
+| 100 | dashboards.ahara.io | ahara-infra (network) |
+| 150 | ci.ahara.io | ahara-infra (services) |
 
 Use 200+ for consumer projects. Do not reuse a priority.
 
@@ -360,19 +360,22 @@ Skip this step if your project does not use PostgreSQL.
 
 ### 5a. Register your project
 
-**This step requires a change to the `ahara-services` repo.**
+**This step requires a change to the `ahara-infra` repo.**
 
-Add your project to `var.migration_projects` in `~/src/ahara-services/infrastructure/terraform/db-migrate.tf`:
+Add your project to `var.migration_projects` in `~/src/ahara-infra/infrastructure/terraform/services/db-migrate.tf`:
 
 ```hcl
 variable "migration_projects" {
   default = {
-    platform = { db_name = "platform" }
-    svap     = { db_name = "svap" }
-    <name>   = { db_name = "<name>" }   # <-- add this
+    svap      = { db_name = "svap" }
+    dosekit   = { db_name = "dosekit" }
+    tastebase = { db_name = "tastebase" }
+    <name>    = { db_name = "<name>" }   # <-- add this
   }
 }
 ```
+
+The shared `ahara` database is registered automatically from the root prefix — do not add it to `migration_projects`.
 
 On first migration, the platform automatically:
 1. Creates the database
@@ -501,7 +504,7 @@ module "ctx" {
 
 Skip this step if your project has no frontend with login.
 
-Auth is handled at the ALB (Step 4). Your frontend needs a Cognito client to obtain tokens. **Create it in your own project** — no ahara-services change required.
+Auth is handled at the ALB (Step 4). Your frontend needs a Cognito client to obtain tokens. **Create it in your own project** — no `ahara-infra` change required.
 
 Include `"cognito-client"` in your `policy_modules` (Step 1), then use the [`cognito-app`](https://github.com/chris-arsenault/ahara-tf-patterns/tree/main/modules/cognito-app) module:
 
@@ -623,7 +626,7 @@ module "frontend" {
 }
 ```
 
-When `og_config` is set, the module deploys the platform OG server Lambda (from S3 artifact published by ahara-services), creates a function URL, and configures CloudFront with dual origins (S3 for static assets, Lambda for HTML). The SPA error fallback is replaced by the Lambda handling all HTML routes.
+When `og_config` is set, the module deploys the platform OG server Lambda (from S3 artifact published by `ahara-infra`), creates a function URL, and configures CloudFront with dual origins (S3 for static assets, Lambda for HTML). The SPA error fallback is replaced by the Lambda handling all HTML routes.
 
 ### Optional parameters
 
@@ -728,9 +731,9 @@ Use tags to discover shared infrastructure. These are resilient to resource repl
 
 | Resource Type | Tag | Values | Data Source | Attributes |
 |---------------|-----|--------|-------------|------------|
-| VPC | `vpc:role` | `platform` | `data "aws_vpc"` | `id`, `cidr_block` |
+| VPC | `vpc:role` | `ahara` | `data "aws_vpc"` | `id`, `cidr_block` |
 | Subnets | `subnet:access` | `private`, `public` | `data "aws_subnets"` | `ids` |
-| ALB | `lb:role` | `platform` | `data "aws_lb"` | `arn`, `dns_name`, `zone_id` |
+| ALB | `lb:role` | `ahara` | `data "aws_lb"` | `arn`, `dns_name`, `zone_id` |
 | ALB Listener | *(derived from ALB)* | | `data "aws_lb_listener"` port 443 | `arn` |
 | Security Group | `sg:role` + `sg:scope` | See table below | `data "aws_security_group"` | `id` |
 | Route53 Zone | *(name-based)* | `ahara.io.` | `data "aws_route53_zone"` | `zone_id` |
@@ -739,47 +742,49 @@ Use tags to discover shared infrastructure. These are resilient to resource repl
 
 | `sg:role` | `sg:scope` | Purpose | Owner |
 |-----------|-----------|---------|-------|
-| `lambda` | `platform` | Shared Lambda egress | ahara-network |
-| `alb` | `public` | ALB public ingress | ahara-network |
-| `rds` | `platform` | Shared RDS access | ahara-services |
-| `nat` | `internet` | NAT instance | ahara-network |
-| `reverse-proxy` | `base` | Reverse proxy base | ahara-network |
-| `reverse-proxy` | `<hostname>` | Per-service proxy | ahara-network |
-| `vpn-client` | `platform` | Opt-in Lambda VPN access | ahara-network |
-| `wireguard` | `truenas` | VPN tunnel | ahara-network |
+| `lambda` | `ahara` | Shared Lambda egress | ahara-infra (network) |
+| `alb` | `public` | ALB public ingress | ahara-infra (network) |
+| `rds` | `ahara` | Shared RDS access | ahara-infra (services) |
+| `nat` | `internet` | NAT instance | ahara-infra (network) |
+| `reverse-proxy` | `base` | Reverse proxy base | ahara-infra (network) |
+| `reverse-proxy` | `<hostname>` | Per-service proxy | ahara-infra (network) |
+| `vpn-client` | `ahara` | Opt-in Lambda VPN access | ahara-infra (network) |
+| `wireguard` | `truenas` | VPN tunnel | ahara-infra (network) |
 
 ### SSM Parameters
 
 SSM is used for values that aren't discoverable via tags (Cognito, RDS connection details, CI tokens).
 
+All platform SSM parameters are published by the `ahara-infra` services layer unless noted otherwise.
+
 #### /ahara/cognito/*
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/cognito/user-pool-id` | String | ahara-services |
-| `/ahara/cognito/user-pool-arn` | String | ahara-services |
-| `/ahara/cognito/domain` | String | ahara-services |
-| `/ahara/cognito/issuer-url` | String | ahara-services |
-| `/ahara/cognito/clients/<app>` | String | ahara-services / cognito-app module |
-| `/ahara/cognito/alb-client-id` | String | ahara-services |
-| `/ahara/cognito/alb-client-secret` | SecureString | ahara-services |
+| `/ahara/cognito/user-pool-id` | String | ahara-infra |
+| `/ahara/cognito/user-pool-arn` | String | ahara-infra |
+| `/ahara/cognito/domain` | String | ahara-infra |
+| `/ahara/cognito/issuer-url` | String | ahara-infra |
+| `/ahara/cognito/clients/<app>` | String | ahara-infra / cognito-app module |
+| `/ahara/cognito/alb-client-id` | String | ahara-infra |
+| `/ahara/cognito/alb-client-secret` | SecureString | ahara-infra |
 
 #### /ahara/rds/*
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/rds/endpoint` | String | ahara-services |
-| `/ahara/rds/address` | String | ahara-services |
-| `/ahara/rds/port` | String | ahara-services |
-| `/ahara/rds/master-username` | String | ahara-services |
-| `/ahara/rds/master-password` | SecureString | ahara-services |
+| `/ahara/rds/endpoint` | String | ahara-infra |
+| `/ahara/rds/address` | String | ahara-infra |
+| `/ahara/rds/port` | String | ahara-infra |
+| `/ahara/rds/master-username` | String | ahara-infra |
+| `/ahara/rds/master-password` | SecureString | ahara-infra |
 
 #### /ahara/db/*
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/db/migrations-bucket` | String | ahara-services |
-| `/ahara/db/migrate-function` | String | ahara-services |
+| `/ahara/db/migrations-bucket` | String | ahara-infra |
+| `/ahara/db/migrate-function` | String | ahara-infra |
 | `/ahara/db/<project>/username` | String | migration Lambda (auto-created) |
 | `/ahara/db/<project>/password` | SecureString | migration Lambda (auto-created) |
 | `/ahara/db/<project>/database` | String | migration Lambda (auto-created) |
@@ -788,32 +793,18 @@ SSM is used for values that aren't discoverable via tags (Cognito, RDS connectio
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/ci/url` | String | ahara-services |
-| `/ahara/ci/ingest-token` | SecureString | ahara-services |
+| `/ahara/ci/url` | String | ahara-infra |
+| `/ahara/ci/ingest-token` | SecureString | ahara-infra |
 
 #### /ahara/sonarqube/*
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/sonarqube/url` | String | ahara-services |
-| `/ahara/sonarqube/ci-token` | SecureString | ahara-services |
+| `/ahara/sonarqube/url` | String | ahara-infra |
+| `/ahara/sonarqube/ci-token` | SecureString | ahara-infra |
 
 #### /ahara/alarms/*
 
 | Parameter | Type | Source |
 |-----------|------|--------|
-| `/ahara/alarms/sns-topic-arn` | String | ahara-services |
-
-#### /ahara/network/* (legacy — prefer tag-based lookups)
-
-These SSM parameters are still published by ahara-network for backwards compatibility. New projects should use the `platform-context` module or tag-based lookups instead.
-
-| Parameter | Type | Replacement |
-|-----------|------|-------------|
-| `/ahara/network/alb-listener-arn` | String | `data "aws_lb"` + `data "aws_lb_listener"` via `lb:role = "platform"` |
-| `/ahara/network/alb-arn` | String | `data "aws_lb"` via `lb:role = "platform"` |
-| `/ahara/network/alb-dns-name` | String | `data "aws_lb"` via `lb:role = "platform"` |
-| `/ahara/network/alb-zone-id` | String | `data "aws_lb"` via `lb:role = "platform"` |
-| `/ahara/network/alb-security-group-id` | String | `data "aws_security_group"` via `sg:role = "alb"` |
-| `/ahara/network/vpc-id` | String | `data "aws_vpc"` via `vpc:role = "platform"` |
-| `/ahara/network/route53-zone-id` | String | `data "aws_route53_zone"` by name `ahara.io.` |
+| `/ahara/alarms/sns-topic-arn` | String | ahara-infra |

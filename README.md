@@ -6,25 +6,19 @@ Index repo for the platform layer — shared AWS infrastructure, identity, deplo
 
 | Repo | Purpose | Path |
 |------|---------|------|
-| [ahara-control](https://github.com/chris-arsenault/ahara-control) | IAM deployer roles, OIDC, shared state bucket, GitHub secrets | `~/src/ahara-control` |
-| [ahara-services](https://github.com/chris-arsenault/ahara-services) | Cognito, auth-trigger, shared RDS, database migrations, CI dashboard, observability | `~/src/ahara-services` |
-| [ahara-network](https://github.com/chris-arsenault/ahara-network) | VPC, subnets, shared ALB, WireGuard VPN, NAT, DNS | `~/src/ahara-network` |
+| [ahara-infra](https://github.com/chris-arsenault/ahara-infra) | Consolidated AWS infrastructure — IAM/OIDC/deployer roles (control), VPC/ALB/VPN/DNS (network), Cognito/RDS/migrations/CI ingest/observability (services) — single Terraform state, plus the Rust Lambda workspace and platform DB migrations | `~/src/ahara-infra` |
 | [nas-sonarqube](https://github.com/chris-arsenault/nas-sonarqube) | SonarQube on TrueNAS — Docker Compose, CI token Lambda | `~/src/nas-sonarqube` |
 | [ahara-tf-patterns](https://github.com/chris-arsenault/ahara-tf-patterns) | Reusable Terraform modules — ALB API, SPA, static site, Cognito, Lambda | `~/src/ahara-tf-patterns` |
 
 ## Deploy Order
 
 ```
-ahara-control   (IAM roles, shared state bucket, GitHub secrets)
+ahara-infra   (single Terraform apply — control + network + services resolve via the module DAG)
        │
-       ├── ahara-services  (Cognito, RDS, migrations, CI ingest, observability)
-       │
-       └── ahara-network   (VPC, ALB, VPN — reads Cognito SSM from services)
-              │
-              └── consuming projects (websites, svap, the-canonry, etc.)
+       └── consuming projects (websites, svap, tastebase, dosekit, etc.)
 ```
 
-Deploy all: `scripts/deploy-all.sh`
+Deploy: `cd ~/src/ahara-infra && ./scripts/deploy.sh`
 
 ## This Repo Also Contains
 
@@ -33,7 +27,6 @@ Deploy all: `scripts/deploy-all.sh`
 - `TRUENAS-DEPLOY.md` — TrueNAS deploy pattern (Docker, Komodo, secret-paths.yml)
 - `.github/workflows/ci.yml` — shared reusable CI/CD workflow (called by all standard projects)
 - `.github/actions/` — `sonar-scan`, `report-build`, `governance-check`, `run-migrations`, `deploy-truenas`
-- `scripts/deploy-all.sh` — deploys all platform repos in order
 
 ## Integration
 

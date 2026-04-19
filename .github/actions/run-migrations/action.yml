@@ -3,7 +3,7 @@ description: Upload migration SQL files to S3 and invoke the platform migration 
 
 inputs:
   project:
-    description: Project name (must match ahara-services migration_projects registration)
+    description: Project name (must match migration_projects registration in ahara-infra services layer)
     required: true
   migrations-dir:
     description: Path to the migrations directory relative to the repo root

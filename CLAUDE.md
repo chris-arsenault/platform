@@ -9,19 +9,18 @@ Index repo for the platform layer. Contains documentation, CI tooling, shared wo
 - `TRUENAS-DEPLOY.md` — TrueNAS deploy pattern (Docker, Komodo, networking)
 - `.github/workflows/ci.yml` — shared reusable workflow (called by all standard projects)
 - `.github/actions/` — sonar-scan, report-build, governance-check, run-migrations, deploy-truenas
-- `scripts/deploy-all.sh` — deploys ahara-control → ahara-services → ahara-network
 
 ## Do not add infrastructure here
 
-Terraform and application code belong in:
-- `ahara-control` — IAM roles, OIDC, shared state bucket
-- `ahara-services` — Cognito, RDS, database migrations, CI ingest
-- `ahara-network` — VPC, ALB, VPN, DNS
+Terraform and application code belong in `ahara-infra`, under the appropriate layer:
+- `infrastructure/terraform/control/` — IAM roles, OIDC, deployer roles, policy library
+- `infrastructure/terraform/network/` — VPC, ALB, WireGuard VPN, NAT, DNS, WAF
+- `infrastructure/terraform/services/` — Cognito, RDS, database migrations, CI ingest, auth-trigger, CORS, komodo-proxy, OG server, observability
+
+All three layers share a single Terraform state (`ahara/infra.tfstate`) and deploy via one `terraform apply`.
 
 ## Related repos (all under ~/src/)
 
-- `ahara-control` — deploys first, creates deployer roles for all other repos
-- `ahara-services` — shared Cognito pool, PostgreSQL RDS, migration service, CI dashboard Lambda
-- `ahara-network` — single VPC, shared ALB with jwt-validation, WireGuard VPN
+- `ahara-infra` — single consolidated infrastructure repo; Rust Lambda workspace in `backend/`, platform migrations in `db/migrations/`, one OIDC deployer role for the whole stack
 - `nas-sonarqube` — SonarQube on TrueNAS, CI token Lambda
 - `ahara-portal` — platform front door, user admin, auth management
