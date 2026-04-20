@@ -23,15 +23,20 @@ permissions:
 jobs:
   ci:
     uses: chris-arsenault/ahara/.github/workflows/ci.yml@main
+    with:
+      rust_extra_ci_commands: |
+        ./scripts/run-backend-integration-tests.sh
     secrets: inherit
 ```
 
-This is the **entire CI workflow file** for standard projects. The shared workflow reads `platform.yml` and runs the appropriate steps based on the declared stack.
+For most projects, omitting `with:` is correct. `rust_extra_ci_commands` exists for repo-specific Rust checks that must stay inside the shared Rust cache/build topology instead of being split into separate jobs.
+
+The shared workflow reads `platform.yml` and runs the appropriate steps based on the declared stack.
 
 ### What the shared workflow does
 
 1. **Governance check** — validates that required lint/test steps exist (auto-passes when using the shared workflow)
-2. **Rust lint + test** — `cargo clippy`, `cargo fmt --check`, `cargo test` with coverage (auto-detected from `Cargo.toml` location)
+2. **Rust lint + test** — `cargo clippy -- -D warnings -W clippy::cognitive_complexity`, `cargo fmt --check`, `cargo test` with coverage, plus optional repo-specific extra Rust CI commands (auto-detected from `Cargo.toml` location)
 3. **TypeScript lint + test** — `pnpm install`, `eslint`, `tsc --noEmit`, `vitest` with coverage (auto-detected from `package.json` location)
 4. **Python lint** — `uv sync`, `ruff check`, `ruff format --check` (auto-detected from `Cargo.toml` sibling)
 5. **Terraform lint** — `terraform fmt -check -recursive` in `infrastructure/terraform/`

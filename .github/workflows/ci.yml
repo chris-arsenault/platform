@@ -7,6 +7,10 @@ on:
         description: Run standard deploy (build + migrate + terraform apply) on main
         type: boolean
         default: true
+      rust_extra_ci_commands:
+        description: Optional repo-root shell commands for additional Rust CI checks inside the shared job
+        type: string
+        default: ""
     secrets:
       OIDC_ROLE:
         required: true
@@ -116,7 +120,18 @@ jobs:
       - name: Lint clippy
         if: steps.config.outputs.has_rust == 'true'
         working-directory: ${{ steps.config.outputs.rust_dir }}
-        run: CARGO_TARGET_DIR=target-clippy cargo clippy --release -- -D warnings
+        run: CARGO_TARGET_DIR=target-clippy cargo clippy --release -- -D warnings -W clippy::cognitive_complexity
+
+      - name: Run extra Rust CI commands
+        if: steps.config.outputs.has_rust == 'true' && inputs.rust_extra_ci_commands != ''
+        env:
+          RUST_EXTRA_CI_COMMANDS: ${{ inputs.rust_extra_ci_commands }}
+        run: |
+          set -euo pipefail
+          tmp_script="$(mktemp)"
+          trap 'rm -f "$tmp_script"' EXIT
+          printf '%s\n' "$RUST_EXTRA_CI_COMMANDS" > "$tmp_script"
+          bash -euo pipefail "$tmp_script"
 
       - name: Test rust
         if: steps.config.outputs.has_rust == 'true'
