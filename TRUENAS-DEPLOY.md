@@ -129,8 +129,8 @@ The `truenas: true` flag tells the shared workflow to:
 Maps compose environment variable names to SSM parameter paths. These are **paths, not values** — safe to commit:
 
 ```yaml
-DB_USER: /ahara/truenas-db/<name>/username
-DB_PASSWORD: /ahara/truenas-db/<name>/password
+DB_USER: /ahara/truenas-db/<stack-name>/<database-id>/username
+DB_PASSWORD: /ahara/truenas-db/<stack-name>/<database-id>/password
 ADMIN_PASSWORD: /ahara/<name>/admin-password
 ```
 
@@ -193,17 +193,23 @@ services:
 
 TrueNAS services use a separate PostgreSQL instance on TrueNAS (192.168.66.3:5432), not the shared RDS. Database management is handled by the `ahara-db-migrate-truenas` Lambda in the `ahara-infra` services layer.
 
-To register a new TrueNAS database project, add it to `var.truenas_db_projects` in `ahara-infra/infrastructure/terraform/services/db-migrate-truenas.tf`:
+To register TrueNAS databases for a stack, add them to `var.truenas_db_stacks` in `ahara-infra/infrastructure/terraform/services/db-migrate-truenas.tf`:
 
 ```hcl
-variable "truenas_db_projects" {
+variable "truenas_db_stacks" {
   default = {
-    <name> = { db_name = "<name>" }
+    <stack-name> = {
+      databases = {
+        <database-id> = {
+          db_name = "<database-name>"
+        }
+      }
+    }
   }
 }
 ```
 
-The Lambda creates the database, application role, and publishes credentials to SSM at `/ahara/truenas-db/<name>/username` and `/ahara/truenas-db/<name>/password`.
+Each deploy for `<stack-name>` ensures every registered database ID owned by that stack. The Lambda creates the database, an application role named `<stack-name>_<database-id>_app`, and publishes credentials to SSM at `/ahara/truenas-db/<stack-name>/<database-id>/username` and `/ahara/truenas-db/<stack-name>/<database-id>/password`.
 
 ---
 

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Ensure the TrueNAS database and app role exist for the current project.
-# Reads project from platform.yml.
+# Ensure the TrueNAS databases and app roles exist for the current stack.
+# Reads the stack name from platform.yml.
 set -euo pipefail
 
 REGION="us-east-1"
-PROJECT=$(platform-manifest project)
+STACK_NAME=$(platform-manifest project)
 
 FN=$(aws ssm get-parameter --name /ahara/truenas-db/function-name \
   --query Parameter.Value --output text --region "${REGION}")
 
-echo "Ensuring TrueNAS database for ${PROJECT}..."
+echo "Ensuring TrueNAS databases for ${STACK_NAME}..."
 RESULT_FILE=$(mktemp)
 aws lambda invoke \
   --function-name "${FN}" \
-  --payload "{\"project\":\"${PROJECT}\"}" \
+  --payload "{\"stack_name\":\"${STACK_NAME}\"}" \
   --cli-binary-format raw-in-base64-out \
   --region "${REGION}" \
   "${RESULT_FILE}" > /dev/null

@@ -40,11 +40,11 @@ runs:
           --query Parameter.Value --output text --region "${REGION}" 2>/dev/null || echo "")
 
         if [ -n "${DB_FN}" ]; then
-          echo "Ensuring TrueNAS database for ${{ inputs.stack-name }}..."
+          echo "Ensuring TrueNAS databases for ${{ inputs.stack-name }}..."
           RESULT_FILE=$(mktemp)
           aws lambda invoke \
             --function-name "${DB_FN}" \
-            --payload "{\"project\":\"${{ inputs.stack-name }}\"}" \
+            --payload "{\"stack_name\":\"${{ inputs.stack-name }}\"}" \
             --cli-binary-format raw-in-base64-out \
             --region "${REGION}" \
             "${RESULT_FILE}" > /dev/null
@@ -54,7 +54,7 @@ runs:
 
           if echo "${RESULT}" | grep -q '"errorMessage"'; then
             if echo "${RESULT}" | grep -q 'not registered'; then
-              echo "Project not registered for TrueNAS DB, skipping."
+              echo "Stack not registered for TrueNAS DBs, skipping."
             else
               echo "::error::TrueNAS DB manage failed"
               echo "${RESULT}" | python3 -m json.tool 2>/dev/null || echo "${RESULT}"
